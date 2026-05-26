@@ -1,0 +1,13 @@
+[Unit]
+Description=WispShell Iroh relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/iroh-relay --dev
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

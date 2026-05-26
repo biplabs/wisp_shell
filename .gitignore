@@ -1,0 +1,14 @@
+target/
+
+components/android/.gradle/
+components/android/.kotlin/
+components/android/app/build/
+components/android/build/
+components/android/local.properties
+
+.env
+*.log
+*.tmp
+
+*.apk
+*.aab

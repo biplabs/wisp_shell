@@ -1,0 +1,7 @@
+wisp.biplabs.com {
+	reverse_proxy 127.0.0.1:8080
+}
+
+wisp-relay.biplabs.com {
+	reverse_proxy 127.0.0.1:3340
+}

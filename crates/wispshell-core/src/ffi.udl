@@ -1,0 +1,3 @@
+namespace wispshell_core {
+  string parse_pairing_uri_json(string uri);
+};

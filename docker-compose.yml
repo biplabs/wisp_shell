@@ -1,0 +1,12 @@
+services:
+  cloud:
+    image: rust:1
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: cargo run -p wispshell-cloud
+    ports:
+      - "8080:8080"
+    environment:
+      WISPSHELL_CLOUD_BIND: 0.0.0.0:8080
+      WISPSHELL_DEV_AUTH: "1"

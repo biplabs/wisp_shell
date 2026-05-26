@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="xterm.css" />
+  </head>
+  <body>
+    <div id="terminal"></div>
+    <textarea id="keyboard" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+    <script src="xterm.js"></script>
+    <script>
+      const term = new Terminal(
+        document.getElementById("terminal"),
+        document.getElementById("keyboard"),
+      );
+      window.focusTerminalInput = () => term.focus();
+      window.writeTerminal = (text) => term.write(text);
+      term.write("WispShell terminal\r\n");
+      term.onData((data) => {
+        if (window.WispTerminal) window.WispTerminal.sendInput(data);
+      });
+    </script>
+  </body>
+</html>

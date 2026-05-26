@@ -1,0 +1,14 @@
+[Unit]
+Description=WispShell cloud register
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/wispshell-cloud
+Environment=WISPSHELL_CLOUD_BIND=127.0.0.1:8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,32 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #101414;
+}
+
+#terminal {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 12px;
+  color: #d8f3dc;
+  background: #101414;
+  font-family: "Roboto Mono", "Droid Sans Mono", monospace;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  outline: none;
+}
+
+#keyboard {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0.01;
+  border: 0;
+  padding: 0;
+  resize: none;
+  color: transparent;
+  background: transparent;
+}
