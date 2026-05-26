@@ -197,7 +197,7 @@ private fun ConnectionStatusDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            if (state == ConnectionState.Attached || error != null || state == ConnectionState.Disconnected) {
+            if (error != null || state == ConnectionState.Disconnected) {
                 TextButton(onClick = onDismiss) {
                     Text("OK")
                 }
