@@ -1,4 +1,4 @@
-package dev.wispshell.app.ui
+package com.biplabs.wisp.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,8 +8,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import dev.wispshell.app.data.BoundDaemon
-import dev.wispshell.app.data.WispRepository
+import com.biplabs.wisp.data.BoundDaemon
+import com.biplabs.wisp.data.WispRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

@@ -1,4 +1,4 @@
-package dev.wispshell.app.terminal
+package com.biplabs.wisp.terminal
 
 interface WispTerminalConnection {
     fun connect()

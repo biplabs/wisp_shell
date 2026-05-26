@@ -1,8 +1,8 @@
-package dev.wispshell.app.data
+package com.biplabs.wisp.data
 
 import android.content.Context
 import android.net.Uri
-import dev.wispshell.app.bridge.WispNative
+import com.biplabs.wisp.bridge.WispNative
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection

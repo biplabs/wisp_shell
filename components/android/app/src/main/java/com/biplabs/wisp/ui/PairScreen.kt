@@ -1,4 +1,4 @@
-package dev.wispshell.app.ui
+package com.biplabs.wisp.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -7,8 +7,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.wispshell.app.data.PairingCodeSession
-import dev.wispshell.app.data.WispRepository
+import com.biplabs.wisp.data.PairingCodeSession
+import com.biplabs.wisp.data.WispRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

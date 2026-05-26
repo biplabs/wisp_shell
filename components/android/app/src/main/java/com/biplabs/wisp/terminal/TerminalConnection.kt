@@ -1,4 +1,4 @@
-package dev.wispshell.app.terminal
+package com.biplabs.wisp.terminal
 
 import android.util.Base64
 import org.json.JSONObject

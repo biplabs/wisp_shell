@@ -96,7 +96,7 @@ impl Callback {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_initializeAndroidContext(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_initializeAndroidContext(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     context: JObject<'_>,
@@ -124,7 +124,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_initializeAndroi
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_generateDeviceIdentityJson(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_generateDeviceIdentityJson(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
 ) -> jstring {
@@ -141,7 +141,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_generateDeviceId
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_deviceIdentityFromPrivateKeyJson(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_deviceIdentityFromPrivateKeyJson(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     private_key: JString<'_>,
@@ -160,7 +160,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_deviceIdentityFr
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_generatePairingCode(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_generatePairingCode(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
 ) -> jstring {
@@ -168,7 +168,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_generatePairingC
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_pairingCodeHash(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_pairingCodeHash(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     code: JString<'_>,
@@ -181,7 +181,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_pairingCodeHash(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_connectP2pTerminal(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTerminal(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     rendezvous_json: JString<'_>,
@@ -334,7 +334,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_connectP2pTermin
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_sendTerminalInput(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_sendTerminalInput(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -355,7 +355,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_sendTerminalInpu
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_resizeTerminal(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_resizeTerminal(
     mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
@@ -379,7 +379,7 @@ pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_resizeTerminal(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_wispshell_app_bridge_WispNative_closeTerminal(
+pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_closeTerminal(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,

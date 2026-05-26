@@ -1,4 +1,4 @@
-package dev.wispshell.app.terminal
+package com.biplabs.wisp.terminal
 
 import android.content.Context
 import android.graphics.Color
@@ -13,7 +13,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import dev.wispshell.app.data.RendezvousInfo
+import com.biplabs.wisp.data.RendezvousInfo
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalOutput
 import com.termux.terminal.TerminalSession

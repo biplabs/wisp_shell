@@ -4,21 +4,50 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseStoreFile = providers.environmentVariable("WISPSHELL_UPLOAD_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("WISPSHELL_UPLOAD_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("WISPSHELL_UPLOAD_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("WISPSHELL_UPLOAD_KEY_PASSWORD").orNull
+val hasReleaseSigning =
+    !releaseStoreFile.isNullOrBlank() &&
+        !releaseStorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() &&
+        !releaseKeyPassword.isNullOrBlank()
+
 android {
-    namespace = "dev.wispshell.app"
-    compileSdk = 34
+    namespace = "com.biplabs.wisp"
+    compileSdk = 35
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "dev.wispshell.app"
+        applicationId = "com.biplabs.wisp"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
     }
 
     buildFeatures {
         compose = true
+    }
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(checkNotNull(releaseStoreFile))
+                storePassword = checkNotNull(releaseStorePassword)
+                keyAlias = checkNotNull(releaseKeyAlias)
+                keyPassword = checkNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     compileOptions {

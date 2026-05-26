@@ -1,4 +1,4 @@
-package dev.wispshell.app.bridge
+package com.biplabs.wisp.bridge
 
 import android.content.Context
 

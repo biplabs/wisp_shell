@@ -1,4 +1,4 @@
-package dev.wispshell.app.data
+package com.biplabs.wisp.data
 
 import org.json.JSONObject
 

@@ -1,17 +1,17 @@
-package dev.wispshell.app
+package com.biplabs.wisp
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
-import dev.wispshell.app.bridge.WispNative
-import dev.wispshell.app.data.BoundDaemon
-import dev.wispshell.app.data.WispRepository
-import dev.wispshell.app.ui.DeviceListScreen
-import dev.wispshell.app.ui.PairScreen
-import dev.wispshell.app.ui.RegistrySetupScreen
-import dev.wispshell.app.ui.SettingsScreen
-import dev.wispshell.app.ui.TerminalScreen
+import com.biplabs.wisp.bridge.WispNative
+import com.biplabs.wisp.data.BoundDaemon
+import com.biplabs.wisp.data.WispRepository
+import com.biplabs.wisp.ui.DeviceListScreen
+import com.biplabs.wisp.ui.PairScreen
+import com.biplabs.wisp.ui.RegistrySetupScreen
+import com.biplabs.wisp.ui.SettingsScreen
+import com.biplabs.wisp.ui.TerminalScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -1,4 +1,4 @@
-package dev.wispshell.app.ui
+package com.biplabs.wisp.ui
 
 import android.app.Activity
 import android.content.Context
@@ -15,11 +15,11 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import dev.wispshell.app.data.BoundDaemon
-import dev.wispshell.app.data.RendezvousInfo
-import dev.wispshell.app.data.WispRepository
-import dev.wispshell.app.terminal.ConnectionState
-import dev.wispshell.app.terminal.WispTermuxTerminalView
+import com.biplabs.wisp.data.BoundDaemon
+import com.biplabs.wisp.data.RendezvousInfo
+import com.biplabs.wisp.data.WispRepository
+import com.biplabs.wisp.terminal.ConnectionState
+import com.biplabs.wisp.terminal.WispTermuxTerminalView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext

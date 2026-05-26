@@ -1,7 +1,7 @@
-package dev.wispshell.app.terminal
+package com.biplabs.wisp.terminal
 
-import dev.wispshell.app.bridge.NativeTerminalCallback
-import dev.wispshell.app.bridge.WispNative
+import com.biplabs.wisp.bridge.NativeTerminalCallback
+import com.biplabs.wisp.bridge.WispNative
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
