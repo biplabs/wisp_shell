@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import dev.wispshell.app.data.BoundDaemon
 import dev.wispshell.app.data.WispRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -22,18 +23,34 @@ fun DeviceListScreen(
     var devices by remember { mutableStateOf<List<BoundDaemon>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<BoundDaemon?>(null) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(repository.cloudUrl, repository.clientDeviceId, refreshNonce) {
+    suspend fun refreshDevices(clearOnFailure: Boolean = false) {
+        loading = true
         runCatching {
             withContext(Dispatchers.IO) { repository.boundDaemons() }
         }.onSuccess {
             devices = it
             error = null
         }.onFailure {
-            devices = emptyList()
+            if (clearOnFailure) {
+                devices = emptyList()
+            }
             error = it.message
+        }
+        loading = false
+    }
+
+    LaunchedEffect(repository.cloudUrl, repository.clientDeviceId, refreshNonce) {
+        refreshDevices(clearOnFailure = devices.isEmpty())
+    }
+
+    LaunchedEffect(repository.cloudUrl, repository.clientDeviceId) {
+        while (true) {
+            delay(5_000)
+            refreshDevices(clearOnFailure = false)
         }
     }
 
@@ -42,6 +59,16 @@ fun DeviceListScreen(
             TopAppBar(
                 title = { Text("WispShell") },
                 actions = {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                refreshNonce += 1
+                            }
+                        },
+                        enabled = !loading,
+                    ) {
+                        Text(if (loading) "Refreshing" else "Refresh")
+                    }
                     TextButton(onClick = onSettings) {
                         Text("Settings")
                     }
@@ -51,6 +78,13 @@ fun DeviceListScreen(
         floatingActionButton = { FloatingActionButton(onClick = onPair) { Text("+") } },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+            if (error != null && devices.isNotEmpty()) {
+                ListItem(
+                    headlineContent = { Text("Registry unavailable") },
+                    supportingContent = { Text(error.orEmpty()) },
+                )
+                HorizontalDivider()
+            }
             devices.forEach { daemon ->
                 ListItem(
                     headlineContent = { Text(daemon.displayName) },
@@ -68,8 +102,18 @@ fun DeviceListScreen(
             }
             if (devices.isEmpty()) {
                 ListItem(
-                    headlineContent = { Text("No paired daemons") },
-                    supportingContent = { Text(error ?: "Tap + to pair a Linux daemon") },
+                    headlineContent = {
+                        Text(
+                            when {
+                                loading -> "Refreshing daemons"
+                                error != null -> "Registry unavailable"
+                                else -> "No paired daemons"
+                            },
+                        )
+                    },
+                    supportingContent = {
+                        Text(error ?: "Tap + to pair a Linux daemon")
+                    },
                 )
             }
         }
