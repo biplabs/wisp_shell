@@ -74,11 +74,19 @@ impl Callback {
     }
 
     fn output(&self, bytes: &[u8]) {
+        self.bytes_callback("onOutput", bytes);
+    }
+
+    fn scrollback(&self, bytes: &[u8]) {
+        self.bytes_callback("onScrollback", bytes);
+    }
+
+    fn bytes_callback(&self, method: &str, bytes: &[u8]) {
         let _ = self.with_env(|env, object| {
             let array = env.byte_array_from_slice(bytes)?;
             env.call_method(
                 object,
-                "onOutput",
+                method,
                 "([B)V",
                 &[JValue::Object(&JObject::from(array))],
             )?;
@@ -188,6 +196,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
     private_key: JString<'_>,
     client_device_id: JString<'_>,
     binding_id: JString<'_>,
+    session_name: JString<'_>,
     callback: JObject<'_>,
 ) -> jlong {
     let result = catch_jni(|| {
@@ -201,6 +210,10 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
             .to_string_lossy()
             .into_owned();
         let binding_id = env.get_string(&binding_id)?.to_string_lossy().into_owned();
+        let session_name = env
+            .get_string(&session_name)?
+            .to_string_lossy()
+            .into_owned();
         let callback = Callback {
             vm: Arc::new(env.get_java_vm()?),
             object: env.new_global_ref(callback)?,
@@ -210,7 +223,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
         let client_keys = DeviceKeypair::from_private_key_b64(&private_key)?;
         let terminal = RUNTIME.block_on(async {
             timeout(
-                Duration::from_secs(30),
+                Duration::from_secs(10),
                 P2PTerminalClient::connect(rendezvous, &client_keys, client_device_id, binding_id),
             )
             .await
@@ -219,7 +232,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
         write_frame(
             &mut writer,
             &ClientToAgent::Attach {
-                session_name: "main".to_string(),
+                session_name,
                 cols: 80,
                 rows: 24,
             },
@@ -236,15 +249,29 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
         RUNTIME.spawn(async move {
             read_callback.state("connecting");
             let mut line = String::new();
+            let mut attached = false;
             loop {
                 line.clear();
-                match reader.read_line(&mut line).await {
+                let read_result = if attached {
+                    reader.read_line(&mut line).await
+                } else {
+                    match timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            read_callback.error("terminal attach timed out");
+                            read_callback.state("disconnected");
+                            break;
+                        }
+                    }
+                };
+                match read_result {
                     Ok(0) => {
                         read_callback.state("disconnected");
                         break;
                     }
                     Ok(_) => match serde_json::from_str::<AgentToClient>(line.trim_end()) {
                         Ok(AgentToClient::SessionAttached { session_id: id, .. }) => {
+                            attached = true;
                             *session_id.lock().unwrap() = Some(id);
                             read_callback.state("attached");
                         }
@@ -254,7 +281,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                                     &base64::engine::general_purpose::STANDARD,
                                     chunk,
                                 ) {
-                                    Ok(bytes) => read_callback.output(&bytes),
+                                    Ok(bytes) => read_callback.scrollback(&bytes),
                                     Err(error) => read_callback.error(&error.to_string()),
                                 }
                             }

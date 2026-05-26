@@ -11,7 +11,8 @@ class NativeP2pTerminalConnection(
     private val privateKey: String,
     private val clientDeviceId: String,
     private val bindingId: String,
-    private val onBytes: (ByteArray) -> Unit,
+    private val sessionName: String,
+    private val onBytes: (ByteArray, Boolean) -> Unit,
     private val onState: (ConnectionState) -> Unit,
     private val onConnectionError: (String) -> Unit,
 ) : WispTerminalConnection {
@@ -31,6 +32,7 @@ class NativeP2pTerminalConnection(
                         privateKey = privateKey,
                         clientDeviceId = clientDeviceId,
                         bindingId = bindingId,
+                        sessionName = sessionName,
                         callback = object : NativeTerminalCallback {
                             override fun onState(state: String) {
                                 when (state) {
@@ -40,8 +42,12 @@ class NativeP2pTerminalConnection(
                                 }
                             }
 
+                            override fun onScrollback(data: ByteArray) {
+                                onBytes(data, true)
+                            }
+
                             override fun onOutput(data: ByteArray) {
-                                onBytes(data)
+                                onBytes(data, false)
                             }
 
                             override fun onError(message: String) {
@@ -100,6 +106,6 @@ class NativeP2pTerminalConnection(
     }
 
     private companion object {
-        const val MAX_CONNECT_ATTEMPTS = 3
+        const val MAX_CONNECT_ATTEMPTS = 1
     }
 }

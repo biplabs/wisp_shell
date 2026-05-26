@@ -10,6 +10,13 @@ data class BoundDaemon(
     val status: String,
 )
 
+data class SavedTerminalTab(
+    val id: String,
+    val sessionName: String,
+    val title: String?,
+    val daemon: BoundDaemon,
+)
+
 data class RendezvousInfo(
     val daemonDeviceId: String,
     val daemonPublicKey: String,

@@ -13,8 +13,9 @@ import java.util.concurrent.Executors
 class TerminalConnection(
     private val host: String,
     private val port: Int,
+    private val sessionName: String = "main",
     private val onOutput: (String) -> Unit,
-    private val onBytes: (ByteArray) -> Unit = {},
+    private val onBytes: (ByteArray, Boolean) -> Unit = { _, _ -> },
     private val onState: (ConnectionState) -> Unit = {},
 ) : WispTerminalConnection {
     private val readExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -34,7 +35,7 @@ class TerminalConnection(
                 sendJson(
                     JSONObject()
                         .put("type", "attach")
-                        .put("session_name", "main")
+                        .put("session_name", sessionName)
                         .put("cols", 80)
                         .put("rows", 24),
                 )
@@ -110,13 +111,13 @@ class TerminalConnection(
                 val chunks = frame.optJSONArray("chunks_b64") ?: return
                 for (index in 0 until chunks.length()) {
                     val bytes = decodeBase64(chunks.getString(index))
-                    onBytes(bytes)
+                    onBytes(bytes, true)
                     onOutput(String(bytes, StandardCharsets.UTF_8))
                 }
             }
             "output" -> {
                 val bytes = decodeBase64(frame.getString("data_b64"))
-                onBytes(bytes)
+                onBytes(bytes, false)
                 onOutput(String(bytes, StandardCharsets.UTF_8))
             }
             "error" -> onOutput("\r\n[${frame.optString("code")}: ${frame.optString("message")}]\r\n")

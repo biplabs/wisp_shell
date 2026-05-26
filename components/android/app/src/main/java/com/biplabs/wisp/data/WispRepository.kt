@@ -100,6 +100,55 @@ class WispRepository(context: Context) {
         )
     }
 
+    fun savedTerminalTabs(): List<SavedTerminalTab> {
+        val raw = prefs.getString(KEY_TERMINAL_TABS, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.getJSONObject(index)
+                    val daemon = item.getJSONObject("daemon")
+                    add(
+                        SavedTerminalTab(
+                            id = item.getString("id"),
+                            sessionName = item.getString("session_name"),
+                            title = item.optString("title").takeIf { it.isNotBlank() },
+                            daemon = BoundDaemon(
+                                bindingId = daemon.getString("binding_id"),
+                                daemonDeviceId = daemon.getString("daemon_device_id"),
+                                daemonPublicKey = daemon.optString("daemon_public_key"),
+                                displayName = daemon.getString("display_name"),
+                                status = daemon.optString("status", "unknown"),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveTerminalTabs(tabs: List<SavedTerminalTab>) {
+        val array = JSONArray()
+        tabs.forEach { tab ->
+            array.put(
+                JSONObject()
+                    .put("id", tab.id)
+                    .put("session_name", tab.sessionName)
+                    .put("title", tab.title ?: "")
+                    .put(
+                        "daemon",
+                        JSONObject()
+                            .put("binding_id", tab.daemon.bindingId)
+                            .put("daemon_device_id", tab.daemon.daemonDeviceId)
+                            .put("daemon_public_key", tab.daemon.daemonPublicKey)
+                            .put("display_name", tab.daemon.displayName)
+                            .put("status", tab.daemon.status),
+                    ),
+            )
+        }
+        prefs.edit().putString(KEY_TERMINAL_TABS, array.toString()).apply()
+    }
+
     fun identity(): DeviceIdentity {
         val existing = prefs.getString(KEY_PRIVATE_KEY, null)
         val json = if (existing.isNullOrBlank()) {
@@ -169,6 +218,7 @@ class WispRepository(context: Context) {
         private const val KEY_CLIENT_DEVICE_ID = "client_device_id"
         private const val KEY_PUBLIC_KEY = "client_public_key"
         private const val KEY_PRIVATE_KEY = "client_private_key"
+        private const val KEY_TERMINAL_TABS = "terminal_tabs"
         private const val DEFAULT_REGISTRY_URL = "https://wisp.biplabs.com"
     }
 }

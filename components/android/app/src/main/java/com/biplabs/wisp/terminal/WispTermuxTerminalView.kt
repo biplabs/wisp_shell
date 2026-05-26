@@ -7,12 +7,17 @@ import android.util.Log
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
+import android.view.InputDevice
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.biplabs.wisp.data.RendezvousInfo
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalOutput
@@ -26,6 +31,9 @@ private const val TAG = "WispTermuxTerminal"
 @Composable
 fun WispTermuxTerminalView(
     modifier: Modifier = Modifier,
+    sessionName: String = "main",
+    active: Boolean = true,
+    reconnectNonce: Int = 0,
     rendezvous: RendezvousInfo? = null,
     clientPrivateKey: String? = null,
     clientDeviceId: String? = null,
@@ -34,20 +42,35 @@ fun WispTermuxTerminalView(
     port: Int = 7777,
     onConnectionState: (ConnectionState) -> Unit = {},
     onConnectionError: (String) -> Unit = {},
+    onTitleChanged: (String) -> Unit = {},
 ) {
-    val holder = remember(rendezvous?.irohNodeAddrJson, clientDeviceId, bindingId, host, port) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val holder = remember(sessionName, reconnectNonce, rendezvous?.irohNodeAddrJson, clientDeviceId, bindingId, host, port) {
         TermuxTerminalHolder(
             host,
             port,
+            sessionName,
             rendezvous,
             clientPrivateKey,
             clientDeviceId,
             bindingId,
             onConnectionState,
             onConnectionError,
+            onTitleChanged,
         )
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(lifecycleOwner, holder) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                holder.reconnectIfDisconnected()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+    DisposableEffect(holder) {
         onDispose {
             holder.close()
         }
@@ -62,7 +85,32 @@ fun WispTermuxTerminalView(
                 setTypeface(Typeface.MONOSPACE)
                 isFocusable = true
                 isFocusableInTouchMode = true
+                setOnTouchListener { view, event ->
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            view.requestFocus()
+                            false
+                        }
+                        MotionEvent.ACTION_MOVE -> true
+                        MotionEvent.ACTION_UP -> {
+                            setTopRow(0)
+                            false
+                        }
+                        else -> false
+                    }
+                }
+                setOnGenericMotionListener { _, event ->
+                    event.action == MotionEvent.ACTION_SCROLL &&
+                        event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
+                }
                 holder.attachView(this)
+            }
+        },
+        update = { view ->
+            view.alpha = if (active) 1f else 0f
+            view.isEnabled = active
+            if (active) {
+                view.requestFocus()
             }
         },
     )
@@ -71,25 +119,37 @@ fun WispTermuxTerminalView(
 private class TermuxTerminalHolder(
     private val host: String,
     private val port: Int,
+    private val sessionName: String,
     private val rendezvous: RendezvousInfo?,
     private val clientPrivateKey: String?,
     private val clientDeviceId: String?,
     private val bindingId: String?,
     private val onConnectionState: (ConnectionState) -> Unit,
     private val onConnectionError: (String) -> Unit,
+    private val onTitleChanged: (String) -> Unit,
 ) : TerminalSessionClient, TerminalViewClient {
     private var view: TerminalView? = null
     private var emulator: TerminalEmulator? = null
     private var dummySession: TerminalSession? = null
     private var connection: WispTerminalConnection? = null
+    private var layoutListener: View.OnLayoutChangeListener? = null
+    @Volatile private var suppressRemoteWrites = false
+    @Volatile private var connectionState = ConnectionState.Connecting
 
     fun attachView(newView: TerminalView) {
+        view?.let { oldView ->
+            layoutListener?.let(oldView::removeOnLayoutChangeListener)
+        }
         view = newView
         newView.setTerminalViewClient(this)
 
-        val remoteOutput = RemoteTerminalOutput { bytes ->
-            connection?.sendBytes(bytes)
-        }
+        val remoteOutput = RemoteTerminalOutput(
+            onWrite = { bytes ->
+                if (suppressRemoteWrites) return@RemoteTerminalOutput
+                connection?.sendBytes(bytes)
+            },
+            onTitle = { title -> updateTitle(title) },
+        )
         val remoteEmulator = TerminalEmulator(
             remoteOutput,
             80,
@@ -110,20 +170,66 @@ private class TermuxTerminalHolder(
         newView.mEmulator = remoteEmulator
         newView.requestFocus()
 
-        connection = createConnection(newView, remoteEmulator).also { it.connect() }
+        startConnection(newView, remoteEmulator)
+        layoutListener = View.OnLayoutChangeListener { changedView, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                (changedView as? TerminalView)?.let(::syncSizeFromView)
+            }
+        }.also(newView::addOnLayoutChangeListener)
+        newView.post { syncSizeFromView(newView) }
+    }
+
+    @Synchronized
+    fun reconnectIfDisconnected() {
+        if (connectionState != ConnectionState.Disconnected) return
+        val terminalView = view ?: return
+        val remoteEmulator = emulator ?: return
+        startConnection(terminalView, remoteEmulator)
+    }
+
+    @Synchronized
+    private fun startConnection(
+        terminalView: TerminalView,
+        remoteEmulator: TerminalEmulator,
+    ) {
+        connection?.close()
+        connectionState = ConnectionState.Connecting
+        val nextConnection = createConnection(terminalView, remoteEmulator)
+        connection = nextConnection
+        val sizeSource = dummySession?.emulator
+        if (sizeSource != null) {
+            nextConnection.resize(sizeSource.mColumns, sizeSource.mRows)
+        }
+        nextConnection.connect()
     }
 
     private fun createConnection(
         newView: TerminalView,
         remoteEmulator: TerminalEmulator,
     ): WispTerminalConnection {
-        val onBytes: (ByteArray) -> Unit = { bytes ->
+        val onBytes: (ByteArray, Boolean) -> Unit = { bytes, fromScrollback ->
+            inferTitle(bytes)?.let { updateTitle(it) }
             newView.post {
-                remoteEmulator.append(bytes, bytes.size)
-                newView.onScreenUpdated()
+                if (fromScrollback) {
+                    suppressRemoteWrites = true
+                }
+                try {
+                    remoteEmulator.append(bytes, bytes.size)
+                    newView.onScreenUpdated()
+                } finally {
+                    if (fromScrollback) {
+                        suppressRemoteWrites = false
+                    }
+                }
             }
         }
-        val onState: (ConnectionState) -> Unit = { state -> onConnectionState(state) }
+        val onState: (ConnectionState) -> Unit = { state ->
+            connectionState = state
+            if (state == ConnectionState.Attached) {
+                resizeConnectionToView()
+            }
+            onConnectionState(state)
+        }
         val onError: (String) -> Unit = { message ->
             onConnectionError(message)
         }
@@ -142,6 +248,7 @@ private class TermuxTerminalHolder(
                 privateKey = nativePrivateKey,
                 clientDeviceId = nativeClientDeviceId,
                 bindingId = nativeBindingId,
+                sessionName = sessionName,
                 onBytes = onBytes,
                 onState = onState,
                 onConnectionError = onError,
@@ -150,6 +257,7 @@ private class TermuxTerminalHolder(
         return TerminalConnection(
             host = host,
             port = port,
+            sessionName = sessionName,
             onOutput = {},
             onBytes = onBytes,
             onState = onState,
@@ -157,6 +265,10 @@ private class TermuxTerminalHolder(
     }
 
     fun close() {
+        view?.let { terminalView ->
+            layoutListener?.let(terminalView::removeOnLayoutChangeListener)
+        }
+        layoutListener = null
         connection?.close()
         dummySession?.finishIfRunning()
         connection = null
@@ -261,7 +373,24 @@ private class TermuxTerminalHolder(
         val sizeSource = dummySession?.emulator ?: return
         remoteEmulator.resize(sizeSource.mColumns, sizeSource.mRows)
         terminalView.mEmulator = remoteEmulator
+        resizeConnectionToView()
+    }
+
+    private fun syncSizeFromView(terminalView: TerminalView) {
+        if (terminalView.width == 0 || terminalView.height == 0) return
+        terminalView.updateSize()
+        emulator?.let { terminalView.mEmulator = it }
+        resizeConnectionToView()
+    }
+
+    private fun resizeConnectionToView() {
+        val sizeSource = dummySession?.emulator ?: return
         connection?.resize(sizeSource.mColumns, sizeSource.mRows)
+    }
+
+    private fun updateTitle(title: String?) {
+        val normalized = title?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        onTitleChanged(folderName(normalized))
     }
 
     override fun logError(tag: String?, message: String?) {
@@ -294,14 +423,42 @@ private class TermuxTerminalHolder(
 
 private class RemoteTerminalOutput(
     private val onWrite: (ByteArray) -> Unit,
+    private val onTitle: (String?) -> Unit,
 ) : TerminalOutput() {
     override fun write(data: ByteArray, offset: Int, count: Int) {
         onWrite(data.copyOfRange(offset, offset + count))
     }
 
-    override fun titleChanged(oldTitle: String?, newTitle: String?) = Unit
+    override fun titleChanged(oldTitle: String?, newTitle: String?) {
+        onTitle(newTitle)
+    }
     override fun onCopyTextToClipboard(text: String?) = Unit
     override fun onPasteTextFromClipboard() = Unit
     override fun onBell() = Unit
     override fun onColorsChanged() = Unit
+}
+
+private fun inferTitle(bytes: ByteArray): String? {
+    val text = bytes.toString(Charsets.UTF_8)
+        .replace(Regex("\\u001b\\[[0-?]*[ -/]*[@-~]"), "")
+        .replace(Regex("\\u001b\\][^\\u0007]*(\\u0007|\\u001b\\\\)"), "")
+    val directory = Regex("""directory:\s+([^\r\n ]+)""")
+        .find(text)
+        ?.groupValues
+        ?.getOrNull(1)
+    if (!directory.isNullOrBlank()) {
+        return folderName(directory)
+    }
+    val promptPath = Regex("""(?:^|[\s.])(~?/[A-Za-z0-9._~/-]+)""")
+        .findAll(text)
+        .map { it.groupValues[1] }
+        .lastOrNull { it.contains('/') }
+    return promptPath?.let(::folderName)
+}
+
+private fun folderName(pathOrTitle: String): String {
+    val cleaned = pathOrTitle
+        .trim()
+        .trimEnd('/', ':')
+    return cleaned.substringAfterLast('/').ifBlank { cleaned }
 }

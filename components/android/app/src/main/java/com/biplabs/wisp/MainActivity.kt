@@ -4,10 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.biplabs.wisp.bridge.WispNative
-import com.biplabs.wisp.data.BoundDaemon
 import com.biplabs.wisp.data.WispRepository
-import com.biplabs.wisp.ui.DeviceListScreen
 import com.biplabs.wisp.ui.PairScreen
 import com.biplabs.wisp.ui.RegistrySetupScreen
 import com.biplabs.wisp.ui.SettingsScreen
@@ -19,46 +18,35 @@ class MainActivity : ComponentActivity() {
         WispNative.initializeAndroidContext(this)
         val repository = WispRepository(this)
         setContent {
-            var screen by remember {
-                mutableStateOf<Screen>(
-                    if (repository.hasRegistryUrl) Screen.Devices else Screen.RegistrySetup,
-                )
+            var screen by rememberSaveable {
+                mutableStateOf(if (repository.hasRegistryUrl) Screen.Workspace else Screen.RegistrySetup)
             }
-            when (val current = screen) {
+            when (screen) {
                 Screen.RegistrySetup -> RegistrySetupScreen(
                     repository = repository,
-                    onDone = { screen = Screen.Devices },
+                    onDone = { screen = Screen.Workspace },
                 )
                 Screen.Pair -> PairScreen(
                     repository = repository,
-                    onDone = { screen = Screen.Devices },
-                )
-                Screen.Devices -> DeviceListScreen(
-                    repository = repository,
-                    onPair = { screen = Screen.Pair },
-                    onSettings = { screen = Screen.Settings },
-                    onOpenTerminal = {
-                        screen = Screen.Terminal(it)
-                    },
+                    onDone = { screen = Screen.Workspace },
                 )
                 Screen.Settings -> SettingsScreen(
                     repository = repository,
-                    onBack = { screen = Screen.Devices },
+                    onBack = { screen = Screen.Workspace },
+                    onPair = { screen = Screen.Pair },
                 )
-                is Screen.Terminal -> TerminalScreen(
+                Screen.Workspace -> TerminalScreen(
                     repository = repository,
-                    daemon = current.daemon,
-                    onBack = { screen = Screen.Devices },
+                    onPair = { screen = Screen.Pair },
                 )
             }
         }
     }
 }
 
-sealed interface Screen {
-    data object RegistrySetup : Screen
-    data object Pair : Screen
-    data object Devices : Screen
-    data object Settings : Screen
-    data class Terminal(val daemon: BoundDaemon) : Screen
+enum class Screen {
+    RegistrySetup,
+    Workspace,
+    Pair,
+    Settings,
 }

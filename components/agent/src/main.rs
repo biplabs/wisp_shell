@@ -58,7 +58,11 @@ async fn run(args: Vec<String>) -> anyhow::Result<()> {
     let config = AgentConfig::load_or_create()?;
     let state = AgentState::load_or_create()?;
     tracing::info!(device_id = %state.device_id, "daemon started");
-    let sessions = SessionManager::new(config.shell_command(), config.scrollback_bytes);
+    let sessions = SessionManager::new(
+        config.shell_command(),
+        config.scrollback_bytes,
+        config.scrollback_replay_bytes,
+    );
     let local_sessions = sessions.clone();
     let iroh_config = config.clone();
     let iroh_state = state.clone();

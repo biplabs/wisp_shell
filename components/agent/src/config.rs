@@ -9,6 +9,8 @@ pub struct AgentConfig {
     pub device_name: String,
     pub shell: String,
     pub scrollback_bytes: usize,
+    #[serde(default = "default_scrollback_replay_bytes")]
+    pub scrollback_replay_bytes: usize,
     #[serde(default)]
     pub iroh_bind_addr: String,
     #[serde(default = "default_iroh_bind_prefix_len")]
@@ -25,6 +27,7 @@ impl Default for AgentConfig {
             device_name: hostname(),
             shell: String::new(),
             scrollback_bytes: 1_048_576,
+            scrollback_replay_bytes: default_scrollback_replay_bytes(),
             iroh_bind_addr: String::new(),
             iroh_bind_prefix_len: default_iroh_bind_prefix_len(),
         }
@@ -70,6 +73,10 @@ impl AgentConfig {
 
 fn default_iroh_bind_prefix_len() -> u8 {
     24
+}
+
+fn default_scrollback_replay_bytes() -> usize {
+    64 * 1024
 }
 
 fn hostname() -> String {

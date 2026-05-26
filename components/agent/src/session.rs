@@ -2,6 +2,7 @@ use crate::pty;
 use anyhow::bail;
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use portable_pty::{MasterPty, PtySize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -14,6 +15,7 @@ pub struct SessionManager {
     inner: Arc<Mutex<HashMap<String, Arc<SessionRuntime>>>>,
     shell: String,
     scrollback_bytes: usize,
+    scrollback_replay_bytes: usize,
 }
 
 pub struct SessionAttachResult {
@@ -36,16 +38,18 @@ pub struct SessionRuntime {
     pub scrollback: Arc<Mutex<VecDeque<Vec<u8>>>>,
     pub attached_clients: Mutex<HashSet<String>>,
     pub input_owner: Mutex<Option<String>>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     tx: broadcast::Sender<Vec<u8>>,
 }
 
 impl SessionManager {
-    pub fn new(shell: String, scrollback_bytes: usize) -> Self {
+    pub fn new(shell: String, scrollback_bytes: usize, scrollback_replay_bytes: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             shell,
             scrollback_bytes,
+            scrollback_replay_bytes,
         }
     }
 
@@ -85,11 +89,8 @@ impl SessionManager {
         *runtime.input_owner.lock().unwrap() = Some(client_device_id);
         tracing::info!(session_id = %runtime.id, "session attached");
 
-        let scrollback_b64 = runtime
-            .scrollback
-            .lock()
-            .unwrap()
-            .iter()
+        let scrollback_b64 = replay_scrollback(&runtime.scrollback, self.scrollback_replay_bytes)
+            .into_iter()
             .map(|chunk| base64::engine::general_purpose::STANDARD.encode(chunk))
             .collect();
 
@@ -121,6 +122,12 @@ impl SessionManager {
         let session = self.by_id(&session_id)?;
         *session.cols.lock().unwrap() = cols;
         *session.rows.lock().unwrap() = rows;
+        session.master.lock().unwrap().resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
         Ok(())
     }
 
@@ -150,6 +157,7 @@ pub fn new_runtime(
     name: String,
     cols: u16,
     rows: u16,
+    master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     scrollback: Arc<Mutex<VecDeque<Vec<u8>>>>,
     tx: broadcast::Sender<Vec<u8>>,
@@ -165,6 +173,7 @@ pub fn new_runtime(
         scrollback,
         attached_clients: Mutex::new(HashSet::new()),
         input_owner: Mutex::new(None),
+        master: Mutex::new(master),
         writer: Mutex::new(writer),
         tx,
     }
@@ -187,6 +196,32 @@ pub fn append_scrollback(
     }
 }
 
+fn replay_scrollback(scrollback: &Arc<Mutex<VecDeque<Vec<u8>>>>, max_bytes: usize) -> Vec<Vec<u8>> {
+    if max_bytes == 0 {
+        return Vec::new();
+    }
+
+    let ring = scrollback.lock().unwrap();
+    let mut selected = VecDeque::new();
+    let mut total = 0;
+
+    for chunk in ring.iter().rev() {
+        if total >= max_bytes {
+            break;
+        }
+        let remaining = max_bytes - total;
+        if chunk.len() <= remaining {
+            selected.push_front(chunk.clone());
+            total += chunk.len();
+        } else {
+            selected.push_front(chunk[chunk.len() - remaining..].to_vec());
+            total = max_bytes;
+        }
+    }
+
+    selected.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +235,38 @@ mod tests {
 
         let chunks: Vec<Vec<u8>> = scrollback.lock().unwrap().iter().cloned().collect();
         assert_eq!(chunks, vec![b"def".to_vec(), b"ghi".to_vec()]);
+    }
+
+    #[test]
+    fn replay_scrollback_returns_newest_chunks_under_limit() {
+        let scrollback = Arc::new(Mutex::new(VecDeque::new()));
+        append_scrollback(&scrollback, 20, b"abc".to_vec());
+        append_scrollback(&scrollback, 20, b"def".to_vec());
+        append_scrollback(&scrollback, 20, b"ghi".to_vec());
+
+        let chunks = replay_scrollback(&scrollback, 6);
+
+        assert_eq!(chunks, vec![b"def".to_vec(), b"ghi".to_vec()]);
+    }
+
+    #[test]
+    fn replay_scrollback_trims_oversized_oldest_selected_chunk() {
+        let scrollback = Arc::new(Mutex::new(VecDeque::new()));
+        append_scrollback(&scrollback, 20, b"abcdef".to_vec());
+        append_scrollback(&scrollback, 20, b"ghi".to_vec());
+
+        let chunks = replay_scrollback(&scrollback, 5);
+
+        assert_eq!(chunks, vec![b"ef".to_vec(), b"ghi".to_vec()]);
+    }
+
+    #[test]
+    fn replay_scrollback_can_be_disabled() {
+        let scrollback = Arc::new(Mutex::new(VecDeque::new()));
+        append_scrollback(&scrollback, 20, b"abc".to_vec());
+
+        let chunks = replay_scrollback(&scrollback, 0);
+
+        assert!(chunks.is_empty());
     }
 }

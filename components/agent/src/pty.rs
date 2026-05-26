@@ -51,6 +51,7 @@ pub fn spawn_session(
         name,
         cols,
         rows,
+        pair.master,
         writer,
         scrollback,
         tx,

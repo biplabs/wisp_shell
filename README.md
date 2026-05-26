@@ -33,6 +33,8 @@ cargo test --workspace
 
 The local TCP daemon accepts newline-delimited protocol JSON. `Attach` creates or reuses the daemon-owned `main` PTY, `Input` writes to the shell, and disconnects do not kill the session.
 
+Agent config lives at the `config_path` printed by `wispshelld status`. `scrollback_bytes` controls the in-memory terminal history cap, while `scrollback_replay_bytes` controls how much of that history is streamed to a client on reconnect. The default replay cap is 65536 bytes; set it to 0 to disable replay.
+
 ## Pairing Without A Camera
 
 The Android app can generate and display a high-entropy one-time code:

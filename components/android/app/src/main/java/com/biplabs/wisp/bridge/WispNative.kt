@@ -17,6 +17,7 @@ object WispNative {
         privateKey: String,
         clientDeviceId: String,
         bindingId: String,
+        sessionName: String,
         callback: NativeTerminalCallback,
     ): Long
     external fun sendTerminalInput(handle: Long, data: ByteArray)
@@ -26,6 +27,7 @@ object WispNative {
 
 interface NativeTerminalCallback {
     fun onState(state: String)
+    fun onScrollback(data: ByteArray)
     fun onOutput(data: ByteArray)
     fun onError(message: String)
 }
