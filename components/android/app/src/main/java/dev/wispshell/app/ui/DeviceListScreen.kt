@@ -59,16 +59,6 @@ fun DeviceListScreen(
             TopAppBar(
                 title = { Text("WispShell") },
                 actions = {
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                refreshNonce += 1
-                            }
-                        },
-                        enabled = !loading,
-                    ) {
-                        Text(if (loading) "Refreshing" else "Refresh")
-                    }
                     TextButton(onClick = onSettings) {
                         Text("Settings")
                     }
