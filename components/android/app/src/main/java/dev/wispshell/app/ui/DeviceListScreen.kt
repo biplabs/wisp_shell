@@ -2,6 +2,9 @@ package dev.wispshell.app.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -59,8 +62,11 @@ fun DeviceListScreen(
             TopAppBar(
                 title = { Text("WispShell") },
                 actions = {
-                    TextButton(onClick = onSettings) {
-                        Text("Settings")
+                    IconButton(onClick = onSettings) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                        )
                     }
                 },
             )
@@ -80,8 +86,11 @@ fun DeviceListScreen(
                     headlineContent = { Text(daemon.displayName) },
                     supportingContent = { Text(daemon.status) },
                     trailingContent = {
-                        TextButton(onClick = { pendingDelete = daemon }) {
-                            Text("Delete")
+                        IconButton(onClick = { pendingDelete = daemon }) {
+                            Icon(
+                                imageVector = Icons.Filled.Delete,
+                                contentDescription = "Delete pairing",
+                            )
                         }
                     },
                     modifier = Modifier.clickable(enabled = daemon.status == "online") {
