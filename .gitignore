@@ -12,3 +12,4 @@ components/android/local.properties
 
 *.apk
 *.aab
+.gitnexus

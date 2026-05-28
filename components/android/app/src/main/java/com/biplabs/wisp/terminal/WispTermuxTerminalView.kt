@@ -8,7 +8,6 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.view.InputDevice
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +42,7 @@ fun WispTermuxTerminalView(
     onConnectionState: (ConnectionState) -> Unit = {},
     onConnectionError: (String) -> Unit = {},
     onTitleChanged: (String) -> Unit = {},
+    onSendInputReady: (((String) -> Unit)?) -> Unit = {},
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val holder = remember(sessionName, reconnectNonce, rendezvous?.irohNodeAddrJson, clientDeviceId, bindingId, host, port) {
@@ -71,7 +71,9 @@ fun WispTermuxTerminalView(
         }
     }
     DisposableEffect(holder) {
+        onSendInputReady { input -> holder.sendInput(input) }
         onDispose {
+            onSendInputReady(null)
             holder.close()
         }
     }
@@ -85,24 +87,6 @@ fun WispTermuxTerminalView(
                 setTypeface(Typeface.MONOSPACE)
                 isFocusable = true
                 isFocusableInTouchMode = true
-                setOnTouchListener { view, event ->
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN -> {
-                            view.requestFocus()
-                            false
-                        }
-                        MotionEvent.ACTION_MOVE -> true
-                        MotionEvent.ACTION_UP -> {
-                            setTopRow(0)
-                            false
-                        }
-                        else -> false
-                    }
-                }
-                setOnGenericMotionListener { _, event ->
-                    event.action == MotionEvent.ACTION_SCROLL &&
-                        event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)
-                }
                 holder.attachView(this)
             }
         },
@@ -280,6 +264,11 @@ private class TermuxTerminalHolder(
     private fun sendRemote(text: String): Boolean {
         connection?.sendInput(text)
         return true
+    }
+
+    fun sendInput(text: String): Boolean {
+        showKeyboard()
+        return sendRemote(text)
     }
 
     private fun showKeyboard() {

@@ -233,6 +233,7 @@ private fun TerminalTabPane(
     var connectionState by remember(tab.id) { mutableStateOf<ConnectionState?>(null) }
     var connectionError by remember(tab.id) { mutableStateOf<String?>(null) }
     var showConnectionDialog by remember(tab.id) { mutableStateOf(false) }
+    var sendTerminalInput by remember(tab.id) { mutableStateOf<((String) -> Unit)?>(null) }
 
     LaunchedEffect(tab.daemon.bindingId, retryNonce) {
         rendezvous = null
@@ -283,47 +284,60 @@ private fun TerminalTabPane(
         retryNonce++
     }
 
-    Box(modifier = modifier) {
-        when {
-            rendezvous != null -> WispTermuxTerminalView(
-                sessionName = tab.sessionName,
-                active = active,
-                reconnectNonce = reconnectNonce,
-                rendezvous = rendezvous,
-                clientPrivateKey = repository.clientPrivateKey,
-                clientDeviceId = repository.clientDeviceId,
-                bindingId = tab.daemon.bindingId,
-                modifier = Modifier.fillMaxSize(),
-                onConnectionState = { state ->
-                    if (state == ConnectionState.Connecting || state == ConnectionState.Attached) {
-                        connectionError = null
-                    }
-                    connectionState = state
-                    if (active) {
-                        showConnectionDialog = true
-                    }
-                },
-                onConnectionError = { message ->
-                    connectionError = message
-                    if (active) {
-                        showConnectionDialog = true
-                    }
-                },
-                onTitleChanged = onTitleChanged,
-            )
+    Column(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            when {
+                rendezvous != null -> WispTermuxTerminalView(
+                    sessionName = tab.sessionName,
+                    active = active,
+                    reconnectNonce = reconnectNonce,
+                    rendezvous = rendezvous,
+                    clientPrivateKey = repository.clientPrivateKey,
+                    clientDeviceId = repository.clientDeviceId,
+                    bindingId = tab.daemon.bindingId,
+                    modifier = Modifier.fillMaxSize(),
+                    onConnectionState = { state ->
+                        if (state == ConnectionState.Connecting || state == ConnectionState.Attached) {
+                            connectionError = null
+                        }
+                        connectionState = state
+                        if (active) {
+                            showConnectionDialog = true
+                        }
+                    },
+                    onConnectionError = { message ->
+                        connectionError = message
+                        if (active) {
+                            showConnectionDialog = true
+                        }
+                    },
+                    onTitleChanged = onTitleChanged,
+                    onSendInputReady = { sender ->
+                        sendTerminalInput = sender
+                    },
+                )
 
-            error != null -> Column(
-                modifier = Modifier
-                    .padding(16.dp)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
-                Button(onClick = { retryNonce++ }) {
-                    Text("Retry")
+                error != null -> Column(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    Button(onClick = { retryNonce++ }) {
+                        Text("Retry")
+                    }
                 }
             }
         }
+        TerminalShortcutBar(
+            enabled = active && sendTerminalInput != null,
+            onSend = { input -> sendTerminalInput?.invoke(input) },
+        )
     }
 
     if (active && showConnectionDialog) {
@@ -349,6 +363,68 @@ private fun TerminalTabPane(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun TerminalShortcutBar(
+    enabled: Boolean,
+    onSend: (String) -> Unit,
+) {
+    Surface(
+        tonalElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TerminalShortcutButton(
+                label = "Ctrl-C",
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onSend("\u0003") },
+            )
+            TerminalShortcutButton(
+                label = "Tab",
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onSend("\t") },
+            )
+            TerminalShortcutButton(
+                label = "Up",
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onSend("\u001b[A") },
+            )
+            TerminalShortcutButton(
+                label = "Down",
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onSend("\u001b[B") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TerminalShortcutButton(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.fillMaxHeight(),
+        contentPadding = PaddingValues(horizontal = 6.dp),
+    ) {
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
