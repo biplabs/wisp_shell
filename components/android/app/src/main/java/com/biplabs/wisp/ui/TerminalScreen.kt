@@ -3,7 +3,13 @@ package com.biplabs.wisp.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -14,7 +20,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -43,6 +54,7 @@ fun TerminalScreen(
     var agentError by remember { mutableStateOf<String?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    val wifiStatus = rememberWifiStatus()
     val activity = LocalContext.current.findActivity()
 
     DisposableEffect(activity) {
@@ -138,6 +150,7 @@ fun TerminalScreen(
                             }
                         }
                     }
+                    WifiStatusIcon(status = wifiStatus)
                     IconButton(onClick = { showSettings = true }) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
@@ -272,6 +285,7 @@ private fun TerminalTabPane(
 
     LaunchedEffect(active, connectionState, reconnectNonce) {
         if (!active || connectionState != ConnectionState.Disconnected) return@LaunchedEffect
+        if (connectionError != null) return@LaunchedEffect
         if (rendezvous == null) return@LaunchedEffect
         delay(2_000)
         connectionError = null
@@ -335,6 +349,10 @@ private fun TerminalTabPane(
             }
         }
         TerminalShortcutBar(
+            enabled = active && sendTerminalInput != null,
+            onSend = { input -> sendTerminalInput?.invoke(input) },
+        )
+        TerminalKeyboard(
             enabled = active && sendTerminalInput != null,
             onSend = { input -> sendTerminalInput?.invoke(input) },
         )
@@ -425,6 +443,289 @@ private fun TerminalShortcutButton(
         contentPadding = PaddingValues(horizontal = 6.dp),
     ) {
         Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun TerminalKeyboard(
+    enabled: Boolean,
+    onSend: (String) -> Unit,
+) {
+    var shifted by remember { mutableStateOf(false) }
+    var symbols by remember { mutableStateOf(false) }
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            if (symbols) {
+                TerminalKeyboardRow(
+                    keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0"),
+                    enabled = enabled,
+                    onKey = onSend,
+                )
+                TerminalKeyboardRow(
+                    keys = listOf("-", "/", ":", ";", "(", ")", "$", "&", "@", "\""),
+                    enabled = enabled,
+                    onKey = onSend,
+                )
+                TerminalKeyboardRow(
+                    keys = listOf(".", ",", "?", "!", "'", "\\", "|", "~"),
+                    enabled = enabled,
+                    onKey = onSend,
+                )
+            } else {
+                TerminalKeyboardRow(
+                    keys = "qwertyuiop".map(Char::toString),
+                    enabled = enabled,
+                    shifted = shifted,
+                    onKey = { key ->
+                        onSend(key)
+                        shifted = false
+                    },
+                )
+                TerminalKeyboardRow(
+                    keys = "asdfghjkl".map(Char::toString),
+                    enabled = enabled,
+                    shifted = shifted,
+                    horizontalPadding = 14.dp,
+                    onKey = { key ->
+                        onSend(key)
+                        shifted = false
+                    },
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TerminalKeyButton(
+                        label = "Shift",
+                        enabled = enabled,
+                        modifier = Modifier.weight(1.35f),
+                        selected = shifted,
+                        onClick = { shifted = !shifted },
+                    )
+                    "zxcvbnm".forEach { char ->
+                        val key = char.toString().let { if (shifted) it.uppercase() else it }
+                        TerminalKeyButton(
+                            label = key,
+                            enabled = enabled,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                onSend(key)
+                                shifted = false
+                            },
+                        )
+                    }
+                    TerminalKeyButton(
+                        label = "Del",
+                        enabled = enabled,
+                        modifier = Modifier.weight(1.35f),
+                        onClick = { onSend("\u007f") },
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TerminalKeyButton(
+                    label = if (symbols) "ABC" else "?123",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1.25f),
+                    selected = symbols,
+                    onClick = {
+                        symbols = !symbols
+                        shifted = false
+                    },
+                )
+                TerminalKeyButton(
+                    label = ",",
+                    enabled = enabled,
+                    modifier = Modifier.weight(0.7f),
+                    onClick = { onSend(",") },
+                )
+                TerminalKeyButton(
+                    label = "Space",
+                    enabled = enabled,
+                    modifier = Modifier.weight(4f),
+                    onClick = { onSend(" ") },
+                )
+                TerminalKeyButton(
+                    label = ".",
+                    enabled = enabled,
+                    modifier = Modifier.weight(0.7f),
+                    onClick = { onSend(".") },
+                )
+                TerminalKeyButton(
+                    label = "Enter",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1.25f),
+                    onClick = { onSend("\r") },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TerminalKeyboardRow(
+    keys: List<String>,
+    enabled: Boolean,
+    shifted: Boolean = false,
+    horizontalPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    onKey: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .padding(horizontal = horizontalPadding),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        keys.forEach { rawKey ->
+            val key = if (shifted) rawKey.uppercase() else rawKey
+            TerminalKeyButton(
+                label = key,
+                enabled = enabled,
+                modifier = Modifier.weight(1f),
+                onClick = { onKey(key) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun TerminalKeyButton(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.fillMaxHeight(),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.primary,
+        ),
+        contentPadding = PaddingValues(horizontal = 1.dp),
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private data class WifiStatus(
+    val connected: Boolean,
+    val validated: Boolean,
+)
+
+@Composable
+private fun rememberWifiStatus(): WifiStatus {
+    val context = LocalContext.current
+    var status by remember(context) { mutableStateOf(context.currentWifiStatus()) }
+    DisposableEffect(context) {
+        val connectivityManager =
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return@DisposableEffect onDispose {}
+        val mainHandler = Handler(Looper.getMainLooper())
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            private fun refresh() {
+                mainHandler.post {
+                    status = context.currentWifiStatus()
+                }
+            }
+
+            override fun onAvailable(network: Network) = refresh()
+            override fun onLost(network: Network) = refresh()
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) = refresh()
+        }
+        runCatching {
+            connectivityManager.registerDefaultNetworkCallback(callback)
+        }.onFailure {
+            status = context.currentWifiStatus()
+        }
+        onDispose {
+            runCatching { connectivityManager.unregisterNetworkCallback(callback) }
+        }
+    }
+    return status
+}
+
+private fun Context.currentWifiStatus(): WifiStatus {
+    val connectivityManager =
+        getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return WifiStatus(connected = false, validated = false)
+    val capabilities = connectivityManager
+        .getNetworkCapabilities(connectivityManager.activeNetwork)
+    return WifiStatus(
+        connected = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
+        validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+    )
+}
+
+@Composable
+private fun WifiStatusIcon(status: WifiStatus) {
+    val color = when {
+        status.connected && status.validated -> MaterialTheme.colorScheme.onSurface
+        status.connected -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.outline
+    }
+    val label = when {
+        status.connected && status.validated -> "Wi-Fi connected"
+        status.connected -> "Wi-Fi connected, internet not validated"
+        else -> "Wi-Fi disconnected"
+    }
+    Box(
+        modifier = Modifier.size(40.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .size(24.dp)
+                .semantics { contentDescription = label },
+        ) {
+            val wifiPath = Path().apply {
+                moveTo(size.width * 0.08f, size.height * 0.26f)
+                quadraticTo(
+                    size.width * 0.5f,
+                    size.height * -0.03f,
+                    size.width * 0.92f,
+                    size.height * 0.26f,
+                )
+                lineTo(size.width * 0.5f, size.height * 0.78f)
+                close()
+            }
+            if (status.connected) {
+                drawPath(path = wifiPath, color = color)
+            } else {
+                drawPath(
+                    path = wifiPath,
+                    color = color,
+                    style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+        }
     }
 }
 

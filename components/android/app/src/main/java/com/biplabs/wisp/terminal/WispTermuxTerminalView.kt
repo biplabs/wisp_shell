@@ -277,7 +277,7 @@ private class TermuxTerminalHolder(
         terminalView.post {
             val imm =
                 terminalView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(terminalView, InputMethodManager.SHOW_IMPLICIT)
+            imm.hideSoftInputFromWindow(terminalView.windowToken, 0)
         }
     }
 
@@ -300,7 +300,7 @@ private class TermuxTerminalHolder(
     }
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
-    override fun shouldEnforceCharBasedInput(): Boolean = true
+    override fun shouldEnforceCharBasedInput(): Boolean = false
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) = Unit

@@ -5,6 +5,9 @@ import com.biplabs.wisp.bridge.WispNative
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 class NativeP2pTerminalConnection(
     private val rendezvousJson: String,
@@ -17,17 +20,27 @@ class NativeP2pTerminalConnection(
     private val onConnectionError: (String) -> Unit,
 ) : WispTerminalConnection {
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var handle: Long = 0
     @Volatile private var closed = false
+    @Volatile private var connected = false
+    @Volatile private var connectTimeout: ScheduledFuture<*>? = null
 
     override fun connect() {
+        connectTimeout = scheduler.schedule({
+            if (!connected && !closed) {
+                onConnectionError("p2p connect timed out")
+                onState(ConnectionState.Disconnected)
+                close()
+            }
+        }, CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         executor.execute {
             var lastError: Throwable? = null
             repeat(MAX_CONNECT_ATTEMPTS) { attempt ->
                 if (closed) return@execute
                 try {
                     onState(ConnectionState.Connecting)
-                    handle = WispNative.connectP2pTerminal(
+                    val nativeHandle = WispNative.connectP2pTerminal(
                         rendezvousJson = rendezvousJson,
                         privateKey = privateKey,
                         clientDeviceId = clientDeviceId,
@@ -36,8 +49,15 @@ class NativeP2pTerminalConnection(
                         callback = object : NativeTerminalCallback {
                             override fun onState(state: String) {
                                 when (state) {
-                                    "attached" -> onState(ConnectionState.Attached)
-                                    "disconnected" -> onState(ConnectionState.Disconnected)
+                                    "attached" -> {
+                                        connected = true
+                                        connectTimeout?.cancel(false)
+                                        onState(ConnectionState.Attached)
+                                    }
+                                    "disconnected" -> {
+                                        connectTimeout?.cancel(false)
+                                        onState(ConnectionState.Disconnected)
+                                    }
                                     else -> onState(ConnectionState.Connecting)
                                 }
                             }
@@ -55,6 +75,13 @@ class NativeP2pTerminalConnection(
                             }
                         },
                     )
+                    if (closed) {
+                        if (nativeHandle != 0L) {
+                            WispNative.closeTerminal(nativeHandle)
+                        }
+                        return@execute
+                    }
+                    handle = nativeHandle
                     return@execute
                 } catch (error: Throwable) {
                     lastError = error
@@ -97,15 +124,18 @@ class NativeP2pTerminalConnection(
         closed = true
         val current = handle
         handle = 0
+        connectTimeout?.cancel(false)
         if (current != 0L) {
             executor.execute {
                 WispNative.closeTerminal(current)
             }
         }
+        scheduler.shutdownNow()
         executor.shutdownNow()
     }
 
     private companion object {
         const val MAX_CONNECT_ATTEMPTS = 1
+        const val CONNECT_TIMEOUT_SECONDS = 20L
     }
 }
