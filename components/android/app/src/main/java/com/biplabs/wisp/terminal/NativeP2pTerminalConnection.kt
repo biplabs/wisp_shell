@@ -25,6 +25,7 @@ class NativeP2pTerminalConnection(
     @Volatile private var closed = false
     @Volatile private var connected = false
     @Volatile private var connectTimeout: ScheduledFuture<*>? = null
+    @Volatile private var pendingResize: Pair<Int, Int>? = null
 
     override fun connect() {
         connectTimeout = scheduler.schedule({
@@ -82,6 +83,10 @@ class NativeP2pTerminalConnection(
                         return@execute
                     }
                     handle = nativeHandle
+                    pendingResize?.let { (cols, rows) ->
+                        pendingResize = null
+                        WispNative.resizeTerminal(nativeHandle, cols, rows)
+                    }
                     return@execute
                 } catch (error: Throwable) {
                     lastError = error
@@ -114,7 +119,10 @@ class NativeP2pTerminalConnection(
 
     override fun resize(cols: Int, rows: Int) {
         val current = handle
-        if (current == 0L) return
+        if (current == 0L) {
+            pendingResize = cols to rows
+            return
+        }
         executor.execute {
             WispNative.resizeTerminal(current, cols, rows)
         }
@@ -124,6 +132,7 @@ class NativeP2pTerminalConnection(
         closed = true
         val current = handle
         handle = 0
+        pendingResize = null
         connectTimeout?.cancel(false)
         if (current != 0L) {
             executor.execute {

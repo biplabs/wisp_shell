@@ -3,12 +3,20 @@ package com.biplabs.wisp.terminal
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.SystemClock
+import android.text.InputType
 import android.util.Log
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
+import android.view.ViewConfiguration
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -26,6 +34,9 @@ import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 
 private const val TAG = "WispTermuxTerminal"
+private const val RESIZE_SETTLE_DELAY_MS = 140L
+private const val REMOTE_RESIZE_REDRAW_DEFER_MS = 220L
+private const val REMOTE_RESIZE_REDRAW_QUIET_MS = 80L
 
 @Composable
 fun WispTermuxTerminalView(
@@ -81,21 +92,33 @@ fun WispTermuxTerminalView(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            TerminalView(context, null).apply {
+            val terminalView = TerminalView(context, null).apply {
                 setBackgroundColor(Color.BLACK)
                 setTextSize(28)
                 setTypeface(Typeface.MONOSPACE)
                 isFocusable = true
                 isFocusableInTouchMode = true
-                holder.attachView(this)
+            }
+            val inputView = TerminalInputEditText(context) { input ->
+                holder.sendInputFromIme(input)
+            }
+            FrameLayout(context).apply {
+                addView(
+                    terminalView,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                    ),
+                )
+                addView(inputView, FrameLayout.LayoutParams(1, 1))
+                holder.attachView(terminalView, inputView)
             }
         },
-        update = { view ->
-            view.alpha = if (active) 1f else 0f
-            view.isEnabled = active
-            if (active) {
-                view.requestFocus()
-            }
+        update = { container ->
+            val terminalView = container.getChildAt(0) as TerminalView
+            terminalView.alpha = if (active) 1f else 0f
+            terminalView.isEnabled = active
+            holder.setActive(active)
         },
     )
 }
@@ -113,19 +136,48 @@ private class TermuxTerminalHolder(
     private val onTitleChanged: (String) -> Unit,
 ) : TerminalSessionClient, TerminalViewClient {
     private var view: TerminalView? = null
+    private var inputView: TerminalInputEditText? = null
     private var emulator: TerminalEmulator? = null
     private var dummySession: TerminalSession? = null
     private var connection: WispTerminalConnection? = null
     private var layoutListener: View.OnLayoutChangeListener? = null
+    private var pendingResize: Runnable? = null
+    private var pendingScreenRefresh: Runnable? = null
+    private var deferScreenUpdatesUntil = 0L
+    private var lastSentColumns: Int? = null
+    private var lastSentRows: Int? = null
+    private var lastTapUpTime = 0L
+    private var keyboardVisible = false
+    private var keyboardAutoShown = false
     @Volatile private var suppressRemoteWrites = false
     @Volatile private var connectionState = ConnectionState.Connecting
 
-    fun attachView(newView: TerminalView) {
+    fun attachView(newView: TerminalView, newInputView: TerminalInputEditText) {
         view?.let { oldView ->
             layoutListener?.let(oldView::removeOnLayoutChangeListener)
+            pendingResize?.let(oldView::removeCallbacks)
+            pendingScreenRefresh?.let(oldView::removeCallbacks)
         }
+        pendingResize = null
+        pendingScreenRefresh = null
+        lastSentColumns = null
+        lastSentRows = null
+        keyboardAutoShown = false
         view = newView
+        inputView = newInputView
         newView.setTerminalViewClient(this)
+        newView.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val now = event.eventTime
+                if (now - lastTapUpTime <= ViewConfiguration.getDoubleTapTimeout()) {
+                    lastTapUpTime = 0L
+                    toggleKeyboard()
+                } else {
+                    lastTapUpTime = now
+                }
+            }
+            false
+        }
 
         val remoteOutput = RemoteTerminalOutput(
             onWrite = { bytes ->
@@ -157,7 +209,7 @@ private class TermuxTerminalHolder(
         startConnection(newView, remoteEmulator)
         layoutListener = View.OnLayoutChangeListener { changedView, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
             if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
-                (changedView as? TerminalView)?.let(::syncSizeFromView)
+                (changedView as? TerminalView)?.let(::scheduleSizeSync)
             }
         }.also(newView::addOnLayoutChangeListener)
         newView.post { syncSizeFromView(newView) }
@@ -199,7 +251,11 @@ private class TermuxTerminalHolder(
                 }
                 try {
                     remoteEmulator.append(bytes, bytes.size)
-                    newView.onScreenUpdated()
+                    if (shouldDeferScreenUpdate()) {
+                        scheduleDeferredScreenRefresh(newView)
+                    } else {
+                        newView.onScreenUpdated()
+                    }
                 } finally {
                     if (fromScrollback) {
                         suppressRemoteWrites = false
@@ -251,14 +307,32 @@ private class TermuxTerminalHolder(
     fun close() {
         view?.let { terminalView ->
             layoutListener?.let(terminalView::removeOnLayoutChangeListener)
+            pendingResize?.let(terminalView::removeCallbacks)
+            pendingScreenRefresh?.let(terminalView::removeCallbacks)
         }
         layoutListener = null
+        pendingResize = null
+        pendingScreenRefresh = null
+        deferScreenUpdatesUntil = 0L
+        lastSentColumns = null
+        lastSentRows = null
+        keyboardAutoShown = false
         connection?.close()
         dummySession?.finishIfRunning()
         connection = null
         dummySession = null
         emulator = null
         view = null
+        inputView = null
+    }
+
+    fun setActive(active: Boolean) {
+        val terminalView = view ?: return
+        terminalView.isEnabled = active
+        if (active && !keyboardAutoShown) {
+            keyboardAutoShown = true
+            showKeyboard()
+        }
     }
 
     private fun sendRemote(text: String): Boolean {
@@ -267,17 +341,43 @@ private class TermuxTerminalHolder(
     }
 
     fun sendInput(text: String): Boolean {
-        showKeyboard()
+        return sendRemote(text)
+    }
+
+    fun sendInputFromIme(text: String): Boolean {
         return sendRemote(text)
     }
 
     private fun showKeyboard() {
         val terminalView = view ?: return
-        terminalView.requestFocus()
+        val keyboardTarget = inputView ?: terminalView
+        terminalView.post {
+            keyboardTarget.requestFocus()
+            val imm =
+                terminalView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.restartInput(keyboardTarget)
+            imm.showSoftInput(keyboardTarget, InputMethodManager.SHOW_IMPLICIT)
+            keyboardVisible = true
+        }
+    }
+
+    private fun hideKeyboard() {
+        val terminalView = view ?: return
+        val keyboardTarget = inputView ?: terminalView
         terminalView.post {
             val imm =
                 terminalView.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.hideSoftInputFromWindow(terminalView.windowToken, 0)
+            imm.hideSoftInputFromWindow(keyboardTarget.windowToken, 0)
+            terminalView.requestFocus()
+            keyboardVisible = false
+        }
+    }
+
+    private fun toggleKeyboard() {
+        if (keyboardVisible) {
+            hideKeyboard()
+        } else {
+            showKeyboard()
         }
     }
 
@@ -295,9 +395,7 @@ private class TermuxTerminalHolder(
     override fun getTerminalCursorStyle(): Int? = null
 
     override fun onScale(scale: Float): Float = scale
-    override fun onSingleTapUp(event: MotionEvent?) {
-        showKeyboard()
-    }
+    override fun onSingleTapUp(event: MotionEvent?) = Unit
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
     override fun shouldEnforceCharBasedInput(): Boolean = false
@@ -362,19 +460,51 @@ private class TermuxTerminalHolder(
         val sizeSource = dummySession?.emulator ?: return
         remoteEmulator.resize(sizeSource.mColumns, sizeSource.mRows)
         terminalView.mEmulator = remoteEmulator
-        resizeConnectionToView()
     }
 
     private fun syncSizeFromView(terminalView: TerminalView) {
         if (terminalView.width == 0 || terminalView.height == 0) return
+        val oldColumns = dummySession?.emulator?.mColumns
         terminalView.updateSize()
         emulator?.let { terminalView.mEmulator = it }
-        resizeConnectionToView()
+        val newColumns = dummySession?.emulator?.mColumns ?: return
+        if (oldColumns == null || oldColumns != newColumns) {
+            resizeConnectionToView()
+        }
+    }
+
+    private fun scheduleSizeSync(terminalView: TerminalView) {
+        pendingResize?.let(terminalView::removeCallbacks)
+        pendingResize = Runnable {
+            pendingResize = null
+            syncSizeFromView(terminalView)
+        }.also { terminalView.postDelayed(it, RESIZE_SETTLE_DELAY_MS) }
     }
 
     private fun resizeConnectionToView() {
         val sizeSource = dummySession?.emulator ?: return
+        if (lastSentColumns == sizeSource.mColumns && lastSentRows == sizeSource.mRows) return
+        lastSentColumns = sizeSource.mColumns
+        lastSentRows = sizeSource.mRows
+        deferScreenUpdatesUntil = SystemClock.uptimeMillis() + REMOTE_RESIZE_REDRAW_DEFER_MS
         connection?.resize(sizeSource.mColumns, sizeSource.mRows)
+    }
+
+    private fun shouldDeferScreenUpdate(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        if (now >= deferScreenUpdatesUntil) return false
+        deferScreenUpdatesUntil = now + REMOTE_RESIZE_REDRAW_QUIET_MS
+        return true
+    }
+
+    private fun scheduleDeferredScreenRefresh(terminalView: TerminalView) {
+        pendingScreenRefresh?.let(terminalView::removeCallbacks)
+        val delay = (deferScreenUpdatesUntil - SystemClock.uptimeMillis()).coerceAtLeast(0L)
+        pendingScreenRefresh = Runnable {
+            pendingScreenRefresh = null
+            deferScreenUpdatesUntil = 0L
+            terminalView.onScreenUpdated()
+        }.also { terminalView.postDelayed(it, delay) }
     }
 
     private fun updateTitle(title: String?) {
@@ -407,6 +537,92 @@ private class TermuxTerminalHolder(
 
     override fun logStackTrace(tag: String?, e: Exception?) {
         Log.e(tag ?: TAG, "terminal exception", e)
+    }
+}
+
+private class TerminalInputEditText(
+    context: Context,
+    private val onInput: (String) -> Boolean,
+) : EditText(context) {
+    init {
+        alpha = 0.01f
+        setBackgroundColor(Color.TRANSPARENT)
+        setTextColor(Color.TRANSPARENT)
+        isCursorVisible = false
+        isFocusable = true
+        isFocusableInTouchMode = true
+        setSingleLine(true)
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        val connection = super.onCreateInputConnection(outAttrs)
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
+            InputType.TYPE_TEXT_VARIATION_URI or
+            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        outAttrs.imeOptions = EditorInfo.IME_ACTION_NONE or
+            EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        outAttrs.privateImeOptions = "restrictDirectWritingArea=true"
+        return TerminalInputConnection(connection, onInput)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_ENTER -> onInput("\r")
+            KeyEvent.KEYCODE_DEL -> onInput("\u007f")
+            KeyEvent.KEYCODE_TAB -> onInput("\t")
+            KeyEvent.KEYCODE_ESCAPE -> onInput("\u001b")
+            else -> super.onKeyDown(keyCode, event)
+        }
+    }
+}
+
+private class TerminalInputConnection(
+    target: InputConnection,
+    private val onInput: (String) -> Boolean,
+) : InputConnectionWrapper(target, true) {
+    override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+        val value = text?.toString().orEmpty()
+        return value.isEmpty() || onInput(value)
+    }
+
+    override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+        return true
+    }
+
+    override fun finishComposingText(): Boolean {
+        return true
+    }
+
+    override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+        if (beforeLength > 0) {
+            repeat(beforeLength) { onInput("\u007f") }
+            return true
+        }
+        return super.deleteSurroundingText(beforeLength, afterLength)
+    }
+
+    override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
+        return deleteSurroundingText(beforeLength, afterLength)
+    }
+
+    override fun sendKeyEvent(event: KeyEvent?): Boolean {
+        if (event?.action != KeyEvent.ACTION_DOWN) {
+            return true
+        }
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_ENTER -> onInput("\r")
+            KeyEvent.KEYCODE_DEL -> onInput("\u007f")
+            KeyEvent.KEYCODE_TAB -> onInput("\t")
+            KeyEvent.KEYCODE_ESCAPE -> onInput("\u001b")
+            else -> {
+                val codePoint = event.getUnicodeChar(event.metaState)
+                codePoint > 0 && onInput(String(Character.toChars(codePoint)))
+            }
+        }
+    }
+
+    override fun performEditorAction(editorAction: Int): Boolean {
+        return onInput("\r")
     }
 }
 
