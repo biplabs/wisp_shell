@@ -56,3 +56,12 @@ The cloud stores only a hash of the Android-generated code. Code sessions are sh
 Devices have Ed25519 identities. Pairing is QR-first and local-consent based; the QR carries a short-lived secret that is not sent by the daemon to the cloud. REST request signing helpers are implemented in the protocol crate, and the cloud keeps terminal traffic out of band.
 
 Known limitations: Linux daemon only, Android app only, sessions survive mobile disconnects but not daemon restarts, terminal sync is byte-stream based, relay/P2P transport is not yet wired into this slice, no account recovery, no file transfer, and no remote desktop.
+
+## License
+
+WispShell is dual-licensed:
+
+- Community use is available under the GNU Affero General Public License v3.0. See `LICENSE`.
+- Commercial licenses are available for organizations that need different terms. See `COMMERCIAL.md`.
+
+Contributions must be compatible with this dual-license model. See `CONTRIBUTING.md`.

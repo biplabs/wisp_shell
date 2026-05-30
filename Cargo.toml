@@ -9,8 +9,8 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-license = "Apache-2.0"
-repository = "https://example.invalid/wispshell"
+license = "AGPL-3.0-only"
+repository = "https://github.com/biplabs/wisp_shell"
 
 [workspace.dependencies]
 anyhow = "1"

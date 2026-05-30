@@ -9,6 +9,7 @@ use tower_http::trace::TraceLayer;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(landing_page))
         .route("/healthz", get(|| async { Json(json!({"ok": true})) }))
         .route("/privacy", get(privacy_policy))
         .route("/v1/devices/register", post(devices::register))
@@ -36,9 +37,386 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+async fn landing_page() -> Html<&'static str> {
+    Html(LANDING_PAGE_HTML)
+}
+
 async fn privacy_policy() -> Html<&'static str> {
     Html(PRIVACY_POLICY_HTML)
 }
+
+const LANDING_PAGE_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WispShell</title>
+  <meta name="description" content="WispShell connects your Android device to your own Linux shell without exposing SSH to the public internet.">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17212b;
+      background: #f5f7fb;
+      line-height: 1.5;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: #f5f7fb;
+    }
+    a {
+      color: inherit;
+    }
+    .shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      width: 100%;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      font-size: 1.1rem;
+      color: #111827;
+    }
+    .mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      background: #1f7a5a;
+      font-weight: 900;
+      font-size: 1rem;
+    }
+    nav {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: #44515f;
+      font-size: 0.95rem;
+    }
+    nav a {
+      text-decoration: none;
+    }
+    main {
+      flex: 1;
+    }
+    .hero {
+      width: 100%;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 52px 24px 64px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.86fr);
+      gap: 56px;
+      align-items: center;
+    }
+    .copy {
+      max-width: 660px;
+    }
+    h1 {
+      margin: 0;
+      color: #111827;
+      font-size: clamp(3rem, 8vw, 5.7rem);
+      line-height: 0.94;
+      letter-spacing: 0;
+    }
+    .lead {
+      margin: 24px 0 0;
+      color: #334155;
+      font-size: clamp(1.1rem, 2vw, 1.35rem);
+      max-width: 620px;
+    }
+    .actions {
+      margin-top: 32px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .button {
+      min-height: 44px;
+      padding: 11px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+      color: #17212b;
+    }
+    .button.primary {
+      background: #1f7a5a;
+      border-color: #1f7a5a;
+      color: #ffffff;
+    }
+    .proof {
+      margin-top: 34px;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      color: #475569;
+      font-size: 0.98rem;
+    }
+    .proof li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .proof li::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      margin-top: 0.55em;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      background: #1f7a5a;
+    }
+    .device {
+      position: relative;
+      border-radius: 28px;
+      padding: 14px;
+      background: #101820;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.25);
+      aspect-ratio: 9 / 17;
+      max-height: 690px;
+      min-height: 500px;
+    }
+    .screen {
+      height: 100%;
+      border-radius: 20px;
+      overflow: hidden;
+      background: #0b1117;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .screenbar {
+      min-height: 48px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #121a23;
+      color: #d8dee9;
+      font-size: 0.9rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #9ee6bd;
+      font-weight: 700;
+    }
+    .status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #31c36b;
+    }
+    .terminal {
+      flex: 1;
+      margin: 0;
+      padding: 22px 18px;
+      color: #d8f3dc;
+      font: 500 0.9rem/1.6 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      background:
+        linear-gradient(180deg, rgba(31,122,90,0.12), rgba(11,17,23,0) 40%),
+        #0b1117;
+    }
+    .cursor {
+      display: inline-block;
+      width: 0.6em;
+      height: 1em;
+      transform: translateY(0.16em);
+      background: #9ee6bd;
+    }
+    .band {
+      background: #ffffff;
+      border-top: 1px solid #dbe2ea;
+    }
+    .details {
+      width: 100%;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 34px 24px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+    .details h2 {
+      margin: 0 0 8px;
+      color: #111827;
+      font-size: 1rem;
+    }
+    .details p {
+      margin: 0;
+      color: #52606d;
+    }
+    @media (max-width: 860px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .hero {
+        padding-top: 28px;
+        grid-template-columns: 1fr;
+        gap: 42px;
+      }
+      .device {
+        width: min(100%, 390px);
+        margin: 0 auto;
+        min-height: 0;
+      }
+      .details {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 520px) {
+      nav {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .hero {
+        padding-left: 18px;
+        padding-right: 18px;
+      }
+      .actions {
+        flex-direction: column;
+      }
+      .button {
+        width: 100%;
+      }
+      .terminal {
+        font-size: 0.8rem;
+      }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root, body {
+        color: #d8dee9;
+        background: #0f141a;
+      }
+      .brand, h1, .details h2 {
+        color: #f8fafc;
+      }
+      .lead {
+        color: #c7d2df;
+      }
+      nav, .proof, .details p {
+        color: #a4afbc;
+      }
+      .button {
+        background: #17212b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      .button.primary {
+        background: #2f9d75;
+        border-color: #2f9d75;
+      }
+      .band {
+        background: #111820;
+        border-top-color: #263241;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/" aria-label="WispShell home">
+        <span class="mark">W</span>
+        <span>WispShell</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/privacy">Privacy</a>
+        <a href="https://github.com/biplabs/wisp_shell">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="copy">
+          <h1>WispShell</h1>
+          <p class="lead">A focused Android remote shell for reaching your own Linux machine without exposing SSH to the public internet.</p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/biplabs/wisp_shell">View Source</a>
+            <a class="button" href="/privacy">Privacy Policy</a>
+          </div>
+          <ul class="proof" aria-label="Product highlights">
+            <li>Pair an Android device with a user-owned Linux daemon.</li>
+            <li>Use a cloud rendezvous service for registration, pairing, and presence.</li>
+            <li>Keep terminal access single-purpose and separate from public SSH exposure.</li>
+          </ul>
+        </div>
+
+        <div class="device" aria-label="WispShell terminal preview">
+          <div class="screen">
+            <div class="screenbar">
+              <span>workstation</span>
+              <span class="status">online</span>
+            </div>
+            <pre class="terminal">$ wispshell pair
+pairing code: 482-913
+android: trusted
+
+$ hostname
+workstation
+
+$ uptime
+05:41 up 12 days, 4 users
+
+$ cargo test -p wispshell-cloud
+test result: ok. 11 passed
+
+$ <span class="cursor"></span></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" aria-label="How WispShell works">
+        <div class="details">
+          <div>
+            <h2>Android first</h2>
+            <p>Designed around a phone or tablet as the terminal client.</p>
+          </div>
+          <div>
+            <h2>User-owned host</h2>
+            <p>The companion daemon runs on the Linux machine you control.</p>
+          </div>
+          <div>
+            <h2>Minimal broker</h2>
+            <p>The cloud service coordinates pairing and rendezvous, not shell contents.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
+"#;
 
 const PRIVACY_POLICY_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -201,6 +579,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn landing_page_is_public_html() {
+        let app = router(AppState::default());
+        let response = app
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/html; charset=utf-8"
+        );
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(body.contains("<h1>WispShell</h1>"));
+        assert!(body.contains("Privacy Policy"));
+        assert!(body.contains("https://github.com/biplabs/wisp_shell"));
     }
 
     #[tokio::test]
