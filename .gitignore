@@ -13,3 +13,5 @@ components/android/local.properties
 *.apk
 *.aab
 .gitnexus
+.cargo/config.toml
+screenshots/
