@@ -404,10 +404,10 @@ private fun TerminalShortcutBar(
                 onClick = { onSend("\u0003") },
             )
             TerminalShortcutButton(
-                label = "Tab",
+                label = "Right",
                 enabled = enabled,
                 modifier = Modifier.weight(1f),
-                onClick = { onSend("\t") },
+                onClick = { onSend("\u001b[C") },
             )
             TerminalShortcutButton(
                 label = "Up",
