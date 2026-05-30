@@ -23,8 +23,8 @@ android {
         applicationId = "com.biplabs.wisp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     buildFeatures {
@@ -91,10 +91,20 @@ dependencies {
 val repoRoot = rootProject.projectDir.parentFile.parentFile
 val generatedJniLibs = layout.buildDirectory.dir("generated/jniLibs")
 val llvmStrip = android.ndkDirectory.resolve("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip")
+val llvmBin = android.ndkDirectory.resolve("toolchains/llvm/prebuilt/linux-x86_64/bin")
 
 tasks.register<Exec>("cargoBuildWispshellCoreArm64") {
     workingDir = repoRoot
     commandLine("cargo", "build", "-p", "wispshell-core", "--target", "aarch64-linux-android")
+    environment(
+        "CC_aarch64_linux_android",
+        llvmBin.resolve("aarch64-linux-android26-clang").absolutePath,
+    )
+    environment("AR_aarch64_linux_android", llvmBin.resolve("llvm-ar").absolutePath)
+    environment(
+        "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER",
+        llvmBin.resolve("aarch64-linux-android26-clang").absolutePath,
+    )
 }
 
 tasks.register<Copy>("copyWispshellCoreArm64") {
