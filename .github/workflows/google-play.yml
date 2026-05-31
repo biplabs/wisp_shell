@@ -1,0 +1,99 @@
+name: Google Play
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      track:
+        description: Google Play track
+        default: internal
+        required: true
+        type: choice
+        options:
+          - internal
+          - alpha
+          - beta
+          - production
+      release_status:
+        description: Release status
+        default: completed
+        required: true
+        type: choice
+        options:
+          - completed
+          - draft
+          - inProgress
+
+permissions:
+  contents: read
+
+concurrency:
+  group: google-play-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish release bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PLAY_TRACK: ${{ inputs.track || 'internal' }}
+      PLAY_RELEASE_STATUS: ${{ inputs.release_status || 'completed' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode upload keystore
+        env:
+          WISPSHELL_UPLOAD_KEYSTORE_BASE64: ${{ secrets.WISPSHELL_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$WISPSHELL_UPLOAD_KEYSTORE_BASE64"
+          mkdir -p "$RUNNER_TEMP/wispshell"
+          printf '%s' "$WISPSHELL_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/wispshell/upload-keystore.p12"
+
+      - name: Configure CI version
+        run: |
+          set -euo pipefail
+          version_code=$((1000 + GITHUB_RUN_NUMBER))
+          echo "WISPSHELL_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+          echo "WISPSHELL_VERSION_NAME=0.1.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Publish to Google Play
+        working-directory: components/android
+        env:
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.ANDROID_PUBLISHER_CREDENTIALS }}
+          WISPSHELL_UPLOAD_STORE_FILE: ${{ runner.temp }}/wispshell/upload-keystore.p12
+          WISPSHELL_UPLOAD_STORE_PASSWORD: ${{ secrets.WISPSHELL_UPLOAD_STORE_PASSWORD }}
+          WISPSHELL_UPLOAD_KEY_ALIAS: ${{ secrets.WISPSHELL_UPLOAD_KEY_ALIAS }}
+          WISPSHELL_UPLOAD_KEY_PASSWORD: ${{ secrets.WISPSHELL_UPLOAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:publishReleaseBundle \
+            --track "$PLAY_TRACK" \
+            --release-status "$PLAY_RELEASE_STATUS"

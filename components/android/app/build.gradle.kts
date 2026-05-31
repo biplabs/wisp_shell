@@ -2,12 +2,15 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.github.triplet.play") version "3.13.0"
 }
 
 val releaseStoreFile = providers.environmentVariable("WISPSHELL_UPLOAD_STORE_FILE").orNull
 val releaseStorePassword = providers.environmentVariable("WISPSHELL_UPLOAD_STORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("WISPSHELL_UPLOAD_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("WISPSHELL_UPLOAD_KEY_PASSWORD").orNull
+val ciVersionCode = providers.environmentVariable("WISPSHELL_VERSION_CODE").orNull?.toIntOrNull()
+val ciVersionName = providers.environmentVariable("WISPSHELL_VERSION_NAME").orNull
 val hasReleaseSigning =
     !releaseStoreFile.isNullOrBlank() &&
         !releaseStorePassword.isNullOrBlank() &&
@@ -23,8 +26,8 @@ android {
         applicationId = "com.biplabs.wisp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = ciVersionCode ?: 2
+        versionName = ciVersionName ?: "0.1.1"
     }
 
     buildFeatures {
@@ -74,6 +77,10 @@ android {
 
 kotlin {
     jvmToolchain(17)
+}
+
+play {
+    defaultToAppBundles.set(true)
 }
 
 dependencies {
