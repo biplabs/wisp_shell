@@ -27,6 +27,7 @@ object WispNative {
 
 interface NativeTerminalCallback {
     fun onState(state: String)
+    fun onTransportPath(path: String, latencyMs: Int)
     fun onScrollback(data: ByteArray)
     fun onOutput(data: ByteArray)
     fun onError(message: String)

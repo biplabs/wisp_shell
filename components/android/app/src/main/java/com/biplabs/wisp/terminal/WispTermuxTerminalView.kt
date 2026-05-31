@@ -40,6 +40,11 @@ private const val REMOTE_RESIZE_REDRAW_QUIET_MS = 80L
 private const val MAX_PREDICTIVE_ECHO_BYTES = 256
 private const val LOCAL_INPUT_FLUSH_DELAY_MS = 260L
 
+data class TransportPathStatus(
+    val path: String,
+    val latencyMs: Int?,
+)
+
 @Composable
 fun WispTermuxTerminalView(
     modifier: Modifier = Modifier,
@@ -54,6 +59,7 @@ fun WispTermuxTerminalView(
     port: Int = 7777,
     onConnectionState: (ConnectionState) -> Unit = {},
     onConnectionError: (String) -> Unit = {},
+    onTransportPathChanged: (TransportPathStatus?) -> Unit = {},
     onTitleChanged: (String) -> Unit = {},
     onSendInputReady: (((String) -> Unit)?) -> Unit = {},
 ) {
@@ -69,6 +75,7 @@ fun WispTermuxTerminalView(
             bindingId,
             onConnectionState,
             onConnectionError,
+            onTransportPathChanged,
             onTitleChanged,
         )
     }
@@ -135,6 +142,7 @@ private class TermuxTerminalHolder(
     private val bindingId: String?,
     private val onConnectionState: (ConnectionState) -> Unit,
     private val onConnectionError: (String) -> Unit,
+    private val onTransportPathChanged: (TransportPathStatus?) -> Unit,
     private val onTitleChanged: (String) -> Unit,
 ) : TerminalSessionClient, TerminalViewClient {
     private var view: TerminalView? = null
@@ -258,6 +266,7 @@ private class TermuxTerminalHolder(
                     pendingLocalErases = 0
                     bytes
                 } else {
+                    flushPendingInput()
                     reconcileLocalEcho(bytes)
                 }
                 if (displayBytes.isEmpty()) {
@@ -291,6 +300,9 @@ private class TermuxTerminalHolder(
         val onError: (String) -> Unit = { message ->
             onConnectionError(message)
         }
+        val onTransportPath: (TransportPathStatus) -> Unit = { status ->
+            onTransportPathChanged(status)
+        }
         val nativeRendezvous = rendezvous
         val nativePrivateKey = clientPrivateKey
         val nativeClientDeviceId = clientDeviceId
@@ -309,9 +321,11 @@ private class TermuxTerminalHolder(
                 sessionName = sessionName,
                 onBytes = onBytes,
                 onState = onState,
+                onTransportPathChanged = onTransportPath,
                 onConnectionError = onError,
             )
         }
+        onTransportPathChanged(TransportPathStatus(path = "tcp", latencyMs = null))
         return TerminalConnection(
             host = host,
             port = port,
@@ -341,6 +355,7 @@ private class TermuxTerminalHolder(
         pendingLocalEcho.clear()
         pendingLocalErases = 0
         connection?.close()
+        onTransportPathChanged(null)
         dummySession?.finishIfRunning()
         connection = null
         dummySession = null
@@ -456,7 +471,7 @@ private class TermuxTerminalHolder(
     private fun shouldPredictLocalEcho(text: String): Boolean {
         if (connectionState != ConnectionState.Attached) return false
         if (text.isEmpty()) return false
-        if (pendingLocalEcho.size >= MAX_PREDICTIVE_ECHO_BYTES) return false
+        if (pendingRemoteInput.length >= MAX_PREDICTIVE_ECHO_BYTES) return false
         return text.all { it in ' '..'~' || it == '\u007f' }
     }
 
@@ -468,15 +483,13 @@ private class TermuxTerminalHolder(
             return
         }
         val bytes = text.toByteArray(Charsets.UTF_8)
-        if (pendingLocalEcho.size + bytes.size > MAX_PREDICTIVE_ECHO_BYTES) {
+        if (pendingRemoteInput.length + bytes.size > MAX_PREDICTIVE_ECHO_BYTES) {
             pendingRemoteInput.clear()
-            pendingLocalEcho.clear()
             return
         }
         if (queueRemoteInput) {
             pendingRemoteInput.append(text)
         }
-        pendingLocalEcho.addAll(bytes.toList())
         remoteEmulator.append(bytes, bytes.size)
         terminalView.onScreenUpdated()
     }
@@ -486,14 +499,10 @@ private class TermuxTerminalHolder(
         terminalView: TerminalView,
         queueRemoteInput: Boolean,
     ) {
-        if (pendingRemoteInput.isNotEmpty()) {
+        if (pendingRemoteInput.isNotEmpty() && pendingRemoteInput.last() != '\u007f') {
             pendingRemoteInput.deleteAt(pendingRemoteInput.length - 1)
-            if (pendingLocalEcho.isNotEmpty()) {
-                pendingLocalEcho.removeAt(pendingLocalEcho.lastIndex)
-            }
         } else if (queueRemoteInput) {
             pendingRemoteInput.append("\u007f")
-            pendingLocalErases += 1
         }
         val bytes = "\b \b".toByteArray(Charsets.UTF_8)
         remoteEmulator.append(bytes, bytes.size)
@@ -518,7 +527,21 @@ private class TermuxTerminalHolder(
         if (pendingRemoteInput.isEmpty()) return
         val text = pendingRemoteInput.toString()
         pendingRemoteInput.clear()
+        expectRemoteEcho(text)
         connection?.sendInput(text)
+    }
+
+    private fun expectRemoteEcho(text: String) {
+        text.forEach { char ->
+            if (char == '\u007f') {
+                pendingLocalErases += 1
+            } else {
+                pendingLocalEcho.addAll(char.toString().toByteArray(Charsets.UTF_8).toList())
+            }
+        }
+        if (pendingLocalEcho.size > MAX_PREDICTIVE_ECHO_BYTES) {
+            pendingLocalEcho.clear()
+        }
     }
 
     private fun reconcileLocalEcho(bytes: ByteArray): ByteArray {
@@ -536,13 +559,8 @@ private class TermuxTerminalHolder(
         val remaining = bytes.copyOfRange(consumed, bytes.size)
         if (pendingLocalEcho.isEmpty()) return remaining
 
-        val rollback = buildString {
-            repeat(pendingLocalEcho.size) {
-                append("\b \b")
-            }
-        }.toByteArray(Charsets.UTF_8)
         pendingLocalEcho.clear()
-        return rollback + remaining
+        return remaining
     }
 
     private fun consumeRemoteErases(bytes: ByteArray): Int {

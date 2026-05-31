@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -37,6 +38,7 @@ import com.biplabs.wisp.data.RendezvousInfo
 import com.biplabs.wisp.data.SavedTerminalTab
 import com.biplabs.wisp.data.WispRepository
 import com.biplabs.wisp.terminal.ConnectionState
+import com.biplabs.wisp.terminal.TransportPathStatus
 import com.biplabs.wisp.terminal.WispTermuxTerminalView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,7 +56,9 @@ fun TerminalScreen(
     var agentError by remember { mutableStateOf<String?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var transportPaths by remember { mutableStateOf<Map<String, TransportPathStatus>>(emptyMap()) }
     val wifiStatus = rememberWifiStatus()
+    val selectedTransportPath = selectedTabId?.let { transportPaths[it] }
     val activity = LocalContext.current.findActivity()
 
     DisposableEffect(activity) {
@@ -150,7 +154,7 @@ fun TerminalScreen(
                             }
                         }
                     }
-                    WifiStatusIcon(status = wifiStatus)
+                    WifiStatusIcon(status = wifiStatus, transportPath = selectedTransportPath)
                     IconButton(onClick = { showSettings = true }) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
@@ -192,6 +196,13 @@ fun TerminalScreen(
                             onTitleChanged = { title ->
                                 tabs = tabs.map {
                                     if (it.id == tab.id) it.copy(title = title) else it
+                                }
+                            },
+                            onTransportPathChanged = { path ->
+                                transportPaths = if (path == null) {
+                                    transportPaths - tab.id
+                                } else {
+                                    transportPaths + (tab.id to path)
                                 }
                             },
                         )
@@ -238,6 +249,7 @@ private fun TerminalTabPane(
     active: Boolean,
     modifier: Modifier,
     onTitleChanged: (String) -> Unit,
+    onTransportPathChanged: (TransportPathStatus?) -> Unit,
 ) {
     var rendezvous by remember(tab.daemon.bindingId) { mutableStateOf<RendezvousInfo?>(null) }
     var error by remember(tab.daemon.bindingId) { mutableStateOf<String?>(null) }
@@ -329,6 +341,7 @@ private fun TerminalTabPane(
                             showConnectionDialog = true
                         }
                     },
+                    onTransportPathChanged = onTransportPathChanged,
                     onTitleChanged = onTitleChanged,
                     onSendInputReady = { sender ->
                         sendTerminalInput = sender
@@ -495,7 +508,7 @@ private fun Context.currentWifiStatus(): WifiStatus {
 }
 
 @Composable
-private fun WifiStatusIcon(status: WifiStatus) {
+private fun WifiStatusIcon(status: WifiStatus, transportPath: TransportPathStatus?) {
     val color = when {
         status.connected && status.validated -> MaterialTheme.colorScheme.onSurface
         status.connected -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -506,34 +519,68 @@ private fun WifiStatusIcon(status: WifiStatus) {
         status.connected -> "Wi-Fi connected, internet not validated"
         else -> "Wi-Fi disconnected"
     }
-    Box(
-        modifier = Modifier.size(40.dp),
-        contentAlignment = Alignment.Center,
+    val transportLabel = when (transportPath?.path) {
+        "direct" -> "Direct"
+        "relay" -> "Relay"
+        "tcp" -> "TCP"
+        "unknown" -> "Path"
+        else -> null
+    }
+    val latencyLabel = transportPath?.latencyMs?.let { "${it} ms" }
+    val transportTextStyle = MaterialTheme.typography.labelSmall.copy(lineHeight = 11.sp)
+    Row(
+        modifier = Modifier.height(40.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(
-            modifier = Modifier
-                .size(24.dp)
-                .semantics { contentDescription = label },
+        Box(
+            modifier = Modifier.size(40.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            val wifiPath = Path().apply {
-                moveTo(size.width * 0.08f, size.height * 0.26f)
-                quadraticTo(
-                    size.width * 0.5f,
-                    size.height * -0.03f,
-                    size.width * 0.92f,
-                    size.height * 0.26f,
-                )
-                lineTo(size.width * 0.5f, size.height * 0.78f)
-                close()
+            Canvas(
+                modifier = Modifier
+                    .size(24.dp)
+                    .semantics { contentDescription = label },
+            ) {
+                val wifiPath = Path().apply {
+                    moveTo(size.width * 0.08f, size.height * 0.26f)
+                    quadraticTo(
+                        size.width * 0.5f,
+                        size.height * -0.03f,
+                        size.width * 0.92f,
+                        size.height * 0.26f,
+                    )
+                    lineTo(size.width * 0.5f, size.height * 0.78f)
+                    close()
+                }
+                if (status.connected) {
+                    drawPath(path = wifiPath, color = color)
+                } else {
+                    drawPath(
+                        path = wifiPath,
+                        color = color,
+                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
+                    )
+                }
             }
-            if (status.connected) {
-                drawPath(path = wifiPath, color = color)
-            } else {
-                drawPath(
-                    path = wifiPath,
-                    color = color,
-                    style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round),
+        }
+        if (transportLabel != null) {
+            Column(
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = transportLabel,
+                    style = transportTextStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
+                if (latencyLabel != null) {
+                    Text(
+                        text = latencyLabel,
+                        style = transportTextStyle,
+                        color = MaterialTheme.colorScheme.outline,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

@@ -1,7 +1,8 @@
 use crate::{P2PTerminalClient, RendezvousInfo};
+use iroh::Watcher;
 use jni21::{
     objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue},
-    sys::{jlong, jstring},
+    sys::{jint, jlong, jstring},
     JNIEnv, JavaVM,
 };
 use std::{
@@ -79,6 +80,22 @@ impl Callback {
 
     fn scrollback(&self, bytes: &[u8]) {
         self.bytes_callback("onScrollback", bytes);
+    }
+
+    fn transport_path(&self, path: &str, latency_ms: Option<u128>) {
+        let _ = self.with_env(|env, object| {
+            let value = env.new_string(path)?;
+            let latency_ms = latency_ms
+                .and_then(|value| i32::try_from(value).ok())
+                .unwrap_or(-1) as jint;
+            env.call_method(
+                object,
+                "onTransportPath",
+                "(Ljava/lang/String;I)V",
+                &[JValue::Object(&JObject::from(value)), JValue::Int(latency_ms)],
+            )?;
+            Ok(())
+        });
     }
 
     fn bytes_callback(&self, method: &str, bytes: &[u8]) {
@@ -228,7 +245,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
             )
             .await
         })??;
-        let (endpoint, mut reader, mut writer) = terminal.into_parts();
+        let (endpoint, connection_info, mut reader, mut writer) = terminal.into_parts();
         write_frame(
             &mut writer,
             &ClientToAgent::Attach {
@@ -244,7 +261,46 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
             vm: callback.vm.clone(),
             object: callback.object.clone(),
         };
+        let path_callback = Callback {
+            vm: callback.vm.clone(),
+            object: callback.object.clone(),
+        };
         let command_session_id = session_id.clone();
+
+        RUNTIME.spawn(async move {
+            let mut paths = connection_info.paths();
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let mut last_snapshot = None::<(String, Option<u128>)>;
+            loop {
+                let snapshot = connection_info
+                    .selected_path()
+                    .map(|path| {
+                        let transport = if path.is_relay() {
+                            "relay"
+                        } else if path.is_ip() {
+                            "direct"
+                        } else {
+                            "unknown"
+                        }
+                        .to_string();
+                        let latency_ms = path.rtt().map(|rtt| rtt.as_millis());
+                        (transport, latency_ms)
+                    })
+                    .unwrap_or_else(|| ("unknown".to_string(), None));
+                if last_snapshot.as_ref() != Some(&snapshot) {
+                    path_callback.transport_path(&snapshot.0, snapshot.1);
+                    last_snapshot = Some(snapshot);
+                }
+                tokio::select! {
+                    result = paths.updated() => {
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                    _ = interval.tick() => {}
+                }
+            }
+        });
 
         RUNTIME.spawn(async move {
             read_callback.state("connecting");

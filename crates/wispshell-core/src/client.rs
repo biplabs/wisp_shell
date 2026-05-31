@@ -82,6 +82,7 @@ impl WispClient {
 #[derive(Debug)]
 pub struct P2PTerminalClient {
     _endpoint: iroh::Endpoint,
+    connection_info: iroh::endpoint::ConnectionInfo,
     reader: BufReader<iroh::endpoint::RecvStream>,
     writer: iroh::endpoint::SendStream,
 }
@@ -104,6 +105,7 @@ impl P2PTerminalClient {
             .bind()
             .await?;
         let connection = endpoint.connect(node_addr, WISP_ALPN).await?;
+        let connection_info = connection.to_info();
         let (mut writer, reader) = connection.open_bi().await?;
         let mut reader = BufReader::new(reader);
 
@@ -163,6 +165,7 @@ impl P2PTerminalClient {
 
         Ok(Self {
             _endpoint: endpoint,
+            connection_info,
             reader,
             writer,
         })
@@ -185,10 +188,16 @@ impl P2PTerminalClient {
         self,
     ) -> (
         iroh::Endpoint,
+        iroh::endpoint::ConnectionInfo,
         BufReader<iroh::endpoint::RecvStream>,
         iroh::endpoint::SendStream,
     ) {
-        (self._endpoint, self.reader, self.writer)
+        (
+            self._endpoint,
+            self.connection_info,
+            self.reader,
+            self.writer,
+        )
     }
 }
 

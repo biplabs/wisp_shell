@@ -17,6 +17,7 @@ class NativeP2pTerminalConnection(
     private val sessionName: String,
     private val onBytes: (ByteArray, Boolean) -> Unit,
     private val onState: (ConnectionState) -> Unit,
+    private val onTransportPathChanged: (TransportPathStatus) -> Unit,
     private val onConnectionError: (String) -> Unit,
 ) : WispTerminalConnection {
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -61,6 +62,15 @@ class NativeP2pTerminalConnection(
                                     }
                                     else -> onState(ConnectionState.Connecting)
                                 }
+                            }
+
+                            override fun onTransportPath(path: String, latencyMs: Int) {
+                                onTransportPathChanged(
+                                    TransportPathStatus(
+                                        path = path,
+                                        latencyMs = latencyMs.takeIf { it >= 0 },
+                                    ),
+                                )
                             }
 
                             override fun onScrollback(data: ByteArray) {
