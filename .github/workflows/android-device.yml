@@ -1,0 +1,85 @@
+name: Install Android Device
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-device-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-debug:
+    name: Build and install debug APK
+    runs-on:
+      - self-hosted
+      - linux
+      - android-device
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.2.12479018"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Show connected devices
+        run: adb devices -l
+
+      - name: Verify target device
+        env:
+          WISPSHELL_ANDROID_SERIAL: ${{ vars.WISPSHELL_ANDROID_SERIAL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WISPSHELL_ANDROID_SERIAL:-}" ]; then
+            adb -s "$WISPSHELL_ANDROID_SERIAL" get-state
+          else
+            connected="$(adb devices | awk 'NR > 1 && $2 == "device" { count++ } END { print count + 0 }')"
+            if [ "$connected" -ne 1 ]; then
+              echo "Expected exactly one authorized adb device, found $connected."
+              echo "Set repository variable WISPSHELL_ANDROID_SERIAL when more than one device is connected."
+              exit 1
+            fi
+          fi
+
+      - name: Build debug APK
+        working-directory: components/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Install debug APK
+        working-directory: components/android
+        env:
+          WISPSHELL_ANDROID_SERIAL: ${{ vars.WISPSHELL_ANDROID_SERIAL }}
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          if [ -n "${WISPSHELL_ANDROID_SERIAL:-}" ]; then
+            adb -s "$WISPSHELL_ANDROID_SERIAL" install -r -d "$apk"
+          else
+            adb install -r -d "$apk"
+          fi
