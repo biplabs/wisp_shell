@@ -16,6 +16,8 @@ use session::SessionManager;
 use state::AgentState;
 use tracing_subscriber::EnvFilter;
 
+const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -32,6 +34,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some("pair") if args.get(1).is_some() => pairing::approve_pairing_code(&args[1]).await,
         Some("pair") => pairing::print_pairing().await,
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("wispshelld {}", AGENT_VERSION);
+            Ok(())
+        }
         Some("status") => status(),
         Some("devices") if args.get(1).map(String::as_str) == Some("list") => devices_list(),
         Some("devices") if args.get(1).map(String::as_str) == Some("revoke") => {
@@ -43,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         Some("install-user-service") => systemd::install_user_service(),
         Some("uninstall-user-service") => systemd::uninstall_user_service(),
         _ => {
-            eprintln!("usage: wispshelld <run|pair [android_code]|status|devices list|devices revoke|install-user-service|uninstall-user-service>");
+            eprintln!("usage: wispshelld <run|pair [android_code]|status|version|devices list|devices revoke|install-user-service|uninstall-user-service>");
             Ok(())
         }
     }

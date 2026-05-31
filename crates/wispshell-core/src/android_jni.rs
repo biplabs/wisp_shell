@@ -16,12 +16,15 @@ use std::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
     time::{timeout, Duration},
 };
 use wispshell_protocol::{
-    generate_pairing_code, pairing_code_hash, AgentToClient, ClientToAgent, DeviceKeypair,
+    decode_binary_header, encode_binary_frame, encode_short_binary_frame, generate_pairing_code,
+    pairing_code_hash, AgentToClient, ClientToAgent, DeviceKeypair, BINARY_FRAME_HEADER_LEN,
+    BINARY_FRAME_MAGIC, BINARY_KIND_AGENT_OUTPUT, BINARY_KIND_CLIENT_INPUT, MAX_BINARY_PAYLOAD_LEN,
+    SHORT_BINARY_FRAME_MAGIC,
 };
 
 static RUNTIME: LazyLock<tokio::runtime::Runtime> =
@@ -45,6 +48,11 @@ enum TerminalCommand {
 struct Callback {
     vm: Arc<JavaVM>,
     object: GlobalRef,
+}
+
+enum AgentStreamFrame {
+    Json(AgentToClient),
+    BinaryOutput(Vec<u8>),
 }
 
 impl Callback {
@@ -92,7 +100,10 @@ impl Callback {
                 object,
                 "onTransportPath",
                 "(Ljava/lang/String;I)V",
-                &[JValue::Object(&JObject::from(value)), JValue::Int(latency_ms)],
+                &[
+                    JValue::Object(&JObject::from(value)),
+                    JValue::Int(latency_ms),
+                ],
             )?;
             Ok(())
         });
@@ -304,14 +315,17 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
 
         RUNTIME.spawn(async move {
             read_callback.state("connecting");
-            let mut line = String::new();
             let mut attached = false;
             loop {
-                line.clear();
                 let read_result = if attached {
-                    reader.read_line(&mut line).await
+                    read_agent_stream_frame(&mut reader).await
                 } else {
-                    match timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
+                    match timeout(
+                        Duration::from_secs(10),
+                        read_agent_stream_frame(&mut reader),
+                    )
+                    .await
+                    {
                         Ok(result) => result,
                         Err(_) => {
                             read_callback.error("terminal attach timed out");
@@ -321,17 +335,20 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                     }
                 };
                 match read_result {
-                    Ok(0) => {
+                    Ok(None) => {
                         read_callback.state("disconnected");
                         break;
                     }
-                    Ok(_) => match serde_json::from_str::<AgentToClient>(line.trim_end()) {
-                        Ok(AgentToClient::SessionAttached { session_id: id, .. }) => {
+                    Ok(Some(AgentStreamFrame::BinaryOutput(bytes))) => {
+                        read_callback.output(&bytes);
+                    }
+                    Ok(Some(AgentStreamFrame::Json(frame))) => match frame {
+                        AgentToClient::SessionAttached { session_id: id, .. } => {
                             attached = true;
                             *session_id.lock().unwrap() = Some(id);
                             read_callback.state("attached");
                         }
-                        Ok(AgentToClient::Scrollback { chunks_b64, .. }) => {
+                        AgentToClient::Scrollback { chunks_b64, .. } => {
                             for chunk in chunks_b64 {
                                 match base64::Engine::decode(
                                     &base64::engine::general_purpose::STANDARD,
@@ -342,7 +359,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                                 }
                             }
                         }
-                        Ok(AgentToClient::Output { data_b64, .. }) => {
+                        AgentToClient::Output { data_b64, .. } => {
                             match base64::Engine::decode(
                                 &base64::engine::general_purpose::STANDARD,
                                 data_b64,
@@ -351,9 +368,8 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                                 Err(error) => read_callback.error(&error.to_string()),
                             }
                         }
-                        Ok(AgentToClient::Error { message, .. }) => read_callback.error(&message),
-                        Ok(_) => {}
-                        Err(error) => read_callback.error(&error.to_string()),
+                        AgentToClient::Error { message, .. } => read_callback.error(&message),
+                        _ => {}
                     },
                     Err(error) => {
                         read_callback.error(&error.to_string());
@@ -366,33 +382,42 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
 
         RUNTIME.spawn(async move {
             while let Some(command) = rx.recv().await {
-                let frame = match command {
+                match command {
                     TerminalCommand::Input(bytes) => {
                         let Some(session_id) = command_session_id.lock().unwrap().clone() else {
                             continue;
                         };
-                        ClientToAgent::Input {
-                            session_id,
-                            data_b64: base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                bytes,
-                            ),
+                        let write_result =
+                            match write_short_binary_frame_async(&mut writer, &bytes).await {
+                                Ok(()) => Ok(()),
+                                Err(_) => {
+                                    write_binary_frame_async(
+                                        &mut writer,
+                                        BINARY_KIND_CLIENT_INPUT,
+                                        &session_id,
+                                        &bytes,
+                                    )
+                                    .await
+                                }
+                            };
+                        if write_result.is_err() {
+                            break;
                         }
                     }
                     TerminalCommand::Resize { cols, rows } => {
                         let Some(session_id) = command_session_id.lock().unwrap().clone() else {
                             continue;
                         };
-                        ClientToAgent::Resize {
+                        let frame = ClientToAgent::Resize {
                             session_id,
                             cols,
                             rows,
+                        };
+                        if write_frame_async(&mut writer, &frame).await.is_err() {
+                            break;
                         }
                     }
                     TerminalCommand::Close => break,
-                };
-                if write_frame_async(&mut writer, &frame).await.is_err() {
-                    break;
                 }
             }
         });
@@ -518,4 +543,84 @@ async fn write_frame_async(
     writer.write_all(b"\n").await?;
     writer.flush().await?;
     Ok(())
+}
+
+async fn write_binary_frame_async(
+    writer: &mut iroh::endpoint::SendStream,
+    kind: u8,
+    session_id: &str,
+    payload: &[u8],
+) -> anyhow::Result<()> {
+    let frame = encode_binary_frame(kind, session_id, payload)?;
+    writer.write_all(&frame).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn write_short_binary_frame_async(
+    writer: &mut iroh::endpoint::SendStream,
+    payload: &[u8],
+) -> anyhow::Result<()> {
+    let frame = encode_short_binary_frame(payload)?;
+    writer.write_all(&frame).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn read_agent_stream_frame(
+    reader: &mut tokio::io::BufReader<iroh::endpoint::RecvStream>,
+) -> anyhow::Result<Option<AgentStreamFrame>> {
+    let mut first = [0u8; 1];
+    let read = reader.read(&mut first).await?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if first[0] == BINARY_FRAME_MAGIC {
+        let mut header = [0u8; BINARY_FRAME_HEADER_LEN];
+        header[0] = first[0];
+        reader.read_exact(&mut header[1..]).await?;
+        let (kind, session_id_len, payload_len) = decode_binary_header(header)?;
+        let mut session_id = vec![0u8; session_id_len];
+        reader.read_exact(&mut session_id).await?;
+        let mut payload = vec![0u8; payload_len];
+        reader.read_exact(&mut payload).await?;
+        return match kind {
+            BINARY_KIND_AGENT_OUTPUT => Ok(Some(AgentStreamFrame::BinaryOutput(payload))),
+            _ => Ok(None),
+        };
+    }
+    if first[0] == SHORT_BINARY_FRAME_MAGIC {
+        let payload_len = read_short_binary_payload_len(reader).await?;
+        let mut payload = vec![0u8; payload_len];
+        reader.read_exact(&mut payload).await?;
+        return Ok(Some(AgentStreamFrame::BinaryOutput(payload)));
+    }
+
+    let mut line = vec![first[0]];
+    reader.read_until(b'\n', &mut line).await?;
+    let frame = serde_json::from_slice::<AgentToClient>(trim_line_end(&line))?;
+    Ok(Some(AgentStreamFrame::Json(frame)))
+}
+
+fn trim_line_end(line: &[u8]) -> &[u8] {
+    line.strip_suffix(b"\n")
+        .and_then(|line| line.strip_suffix(b"\r").or(Some(line)))
+        .unwrap_or(line)
+}
+
+async fn read_short_binary_payload_len(
+    reader: &mut tokio::io::BufReader<iroh::endpoint::RecvStream>,
+) -> anyhow::Result<usize> {
+    let mut value = 0usize;
+    for index in 0..4 {
+        let byte = reader.read_u8().await?;
+        value |= ((byte & 0x7f) as usize) << (index * 7);
+        if byte & 0x80 == 0 {
+            if value > MAX_BINARY_PAYLOAD_LEN {
+                anyhow::bail!("short binary frame payload too large");
+            }
+            return Ok(value);
+        }
+    }
+    anyhow::bail!("short binary frame length is too large")
 }

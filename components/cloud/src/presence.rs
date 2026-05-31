@@ -8,6 +8,7 @@ pub struct PresenceUpdateRequest {
     pub device_id: String,
     pub status: String,
     pub iroh_node_addr_json: Option<serde_json::Value>,
+    pub agent_version: Option<String>,
 }
 
 pub async fn update(
@@ -18,6 +19,7 @@ pub async fn update(
         device_id: req.device_id.clone(),
         status: req.status,
         iroh_node_addr_json: req.iroh_node_addr_json,
+        agent_version: req.agent_version,
         updated_at: Utc::now(),
     };
     state

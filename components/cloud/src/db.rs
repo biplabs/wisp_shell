@@ -71,6 +71,7 @@ pub struct Presence {
     pub device_id: String,
     pub status: String,
     pub iroh_node_addr_json: Option<serde_json::Value>,
+    pub agent_version: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -189,10 +190,18 @@ impl SqliteStore {
                     device_id TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
                     iroh_node_addr_json TEXT,
+                    agent_version TEXT,
                     updated_at TEXT NOT NULL
                 );
                 "#,
             )?;
+            let columns = conn
+                .prepare("PRAGMA table_info(presence)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if !columns.iter().any(|column| column == "agent_version") {
+                conn.execute("ALTER TABLE presence ADD COLUMN agent_version TEXT", [])?;
+            }
             Ok(())
         })?;
         Ok(store)
@@ -281,8 +290,8 @@ impl SqliteStore {
             }
             for presence in db.presence.values() {
                 tx.execute(
-                    "INSERT INTO presence (device_id, status, iroh_node_addr_json, updated_at)
-                     VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO presence (device_id, status, iroh_node_addr_json, agent_version, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         presence.device_id,
                         presence.status,
@@ -291,6 +300,7 @@ impl SqliteStore {
                             .as_ref()
                             .map(serde_json::to_string)
                             .transpose()?,
+                        presence.agent_version,
                         encode_dt(presence.updated_at),
                     ],
                 )?;
@@ -383,8 +393,9 @@ fn load_bindings(conn: &Connection) -> anyhow::Result<HashMap<String, Binding>> 
 }
 
 fn load_presence(conn: &Connection) -> anyhow::Result<HashMap<String, Presence>> {
-    let mut stmt =
-        conn.prepare("SELECT device_id, status, iroh_node_addr_json, updated_at FROM presence")?;
+    let mut stmt = conn.prepare(
+        "SELECT device_id, status, iroh_node_addr_json, agent_version, updated_at FROM presence",
+    )?;
     let rows = stmt.query_map([], |row| {
         let iroh_node_addr_json = row
             .get::<_, Option<String>>(2)?
@@ -395,7 +406,8 @@ fn load_presence(conn: &Connection) -> anyhow::Result<HashMap<String, Presence>>
             device_id: row.get(0)?,
             status: row.get(1)?,
             iroh_node_addr_json,
-            updated_at: decode_dt(row.get::<_, String>(3)?)?,
+            agent_version: row.get(3)?,
+            updated_at: decode_dt(row.get::<_, String>(4)?)?,
         })
     })?;
     collect_by(rows, |presence| presence.device_id.clone())

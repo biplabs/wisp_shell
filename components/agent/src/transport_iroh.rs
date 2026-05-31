@@ -3,7 +3,9 @@ use crate::{
     config::AgentConfig,
     session::SessionManager,
     state::AgentState,
-    transport_stream::{handle_json_lines, write_json},
+    transport_stream::{
+        handle_client_frames, read_client_stream_frame, write_json, ClientStreamFrame,
+    },
 };
 use anyhow::{bail, Context};
 use iroh::{
@@ -11,7 +13,7 @@ use iroh::{
     Endpoint, RelayMode, RelayUrl,
 };
 use std::net::SocketAddr;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 use wispshell_protocol::{
@@ -20,6 +22,7 @@ use wispshell_protocol::{
 };
 
 const PRESENCE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub async fn serve(
     config: AgentConfig,
@@ -118,6 +121,7 @@ async fn publish_presence(
             device_id: state.device_id.clone(),
             status: "online".to_string(),
             iroh_node_addr_json: Some(serde_json::to_value(endpoint.addr())?),
+            agent_version: Some(AGENT_VERSION.to_string()),
         })
         .await?;
     tracing::info!("published iroh presence");
@@ -131,12 +135,16 @@ async fn handle_authenticated_stream(
     sessions: SessionManager,
 ) -> anyhow::Result<()> {
     let write = std::sync::Arc::new(Mutex::new(send));
-    let mut lines = BufReader::new(recv).lines();
-    let hello_line = lines
-        .next_line()
+    let mut reader = BufReader::new(recv);
+    let hello = match read_client_stream_frame(&mut reader)
         .await?
-        .context("client disconnected before hello")?;
-    let hello: ClientToAgent = serde_json::from_str(&hello_line)?;
+        .context("client disconnected before hello")?
+    {
+        ClientStreamFrame::Json(frame) => frame,
+        ClientStreamFrame::Binary(_) | ClientStreamFrame::ShortBinary(_) => {
+            bail!("first frame must be client_hello")
+        }
+    };
     let ClientToAgent::ClientHello {
         protocol_version,
         client_device_id,
@@ -185,11 +193,15 @@ async fn handle_authenticated_stream(
     )
     .await?;
 
-    let auth_line = lines
-        .next_line()
+    let auth = match read_client_stream_frame(&mut reader)
         .await?
-        .context("client disconnected before auth")?;
-    let auth: ClientToAgent = serde_json::from_str(&auth_line)?;
+        .context("client disconnected before auth")?
+    {
+        ClientStreamFrame::Json(frame) => frame,
+        ClientStreamFrame::Binary(_) | ClientStreamFrame::ShortBinary(_) => {
+            bail!("second frame must be client_auth")
+        }
+    };
     let ClientToAgent::ClientAuth { signature } = auth else {
         bail!("second frame must be client_auth");
     };
@@ -217,5 +229,5 @@ async fn handle_authenticated_stream(
     )
     .await?;
 
-    handle_json_lines(&mut lines, write, client_device_id, sessions).await
+    handle_client_frames(&mut reader, write, client_device_id, sessions).await
 }

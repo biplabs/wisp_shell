@@ -8,6 +8,8 @@ use serde::Deserialize;
 use serde_json::json;
 use wispshell_protocol::{ERR_DEVICE_NOT_BOUND, ERR_DEVICE_NOT_FOUND, ERR_DEVICE_REVOKED};
 
+const REGISTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Deserialize)]
 pub struct RendezvousQuery {
     pub client_device_id: String,
@@ -49,6 +51,8 @@ pub async fn get(
         "daemon_public_key": device.public_key,
         "status": presence.map(|p| p.status.clone()).unwrap_or_else(|| "offline".to_string()),
         "iroh_node_addr": presence.and_then(|p| p.iroh_node_addr_json.clone()),
+        "agent_version": presence.and_then(|p| p.agent_version.clone()),
+        "registry_version": REGISTRY_VERSION,
         "updated_at": presence.map(|p| p.updated_at),
     })))
 }

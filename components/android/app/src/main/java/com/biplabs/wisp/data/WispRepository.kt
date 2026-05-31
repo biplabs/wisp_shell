@@ -90,6 +90,8 @@ class WispRepository(context: Context) {
             daemonPublicKey = json.getString("daemon_public_key"),
             status = json.getString("status"),
             irohNodeAddrJson = json.optJSONObject("iroh_node_addr")?.toString(),
+            agentVersion = json.optString("agent_version").takeIf { it.isNotBlank() },
+            registryVersion = json.optString("registry_version").takeIf { it.isNotBlank() },
         )
     }
 

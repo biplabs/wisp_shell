@@ -770,6 +770,11 @@ private fun ConnectionStatusDialog(
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val appVersion = remember(context) { context.appVersionName() }
+    val agentVersion = rendezvous?.agentVersion
+    val registryVersion = rendezvous?.registryVersion
+    val versionWarnings = versionWarnings(agentVersion, registryVersion, appVersion)
     val details = remember(rendezvous?.irohNodeAddrJson) {
         P2pDetails.from(rendezvous?.irohNodeAddrJson)
     }
@@ -806,7 +811,13 @@ private fun ConnectionStatusDialog(
                 error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
+                versionWarnings.forEach { warning ->
+                    Text(warning, color = MaterialTheme.colorScheme.error)
+                }
                 DetailLine("Daemon", daemon.displayName)
+                DetailLine("App version", appVersion)
+                DetailLine("Agent version", agentVersion ?: "unknown")
+                DetailLine("Registry version", registryVersion ?: "unknown")
                 DetailLine("Transport", "Iroh P2P")
                 DetailLine("Registry status", rendezvous?.status ?: "fetching")
                 DetailLine("Binding", bindingId.take(8))
@@ -823,6 +834,59 @@ private fun ConnectionStatusDialog(
             }
         },
     )
+}
+
+private fun Context.appVersionName(): String {
+    return runCatching {
+        packageManager.getPackageInfo(packageName, 0).versionName
+    }.getOrNull() ?: "unknown"
+}
+
+private fun versionWarnings(
+    agentVersion: String?,
+    registryVersion: String?,
+    appVersion: String,
+): List<String> {
+    return buildList {
+        val normalizedAgent = agentVersion?.takeIf { it.isNotBlank() }
+        if (normalizedAgent == null) {
+            add("Agent version unavailable. Update the agent and registry.")
+        } else {
+            when (compareDottedVersions(normalizedAgent, appVersion)) {
+                1 -> add("App is older than the agent. Update the app.")
+                -1 -> add("Agent is older than the app. Update the agent.")
+            }
+        }
+
+        val normalizedRegistry = registryVersion?.takeIf { it.isNotBlank() }
+        if (normalizedRegistry == null) {
+            add("Registry version unavailable. Update the registry.")
+        } else {
+            when (compareDottedVersions(normalizedRegistry, appVersion)) {
+                1 -> add("App is older than the registry. Update the app.")
+                -1 -> add("Registry is older than the app. Update the registry.")
+            }
+        }
+    }
+}
+
+private fun compareDottedVersions(left: String, right: String): Int {
+    val leftParts = left.versionParts()
+    val rightParts = right.versionParts()
+    val count = maxOf(leftParts.size, rightParts.size)
+    for (index in 0 until count) {
+        val l = leftParts.getOrElse(index) { 0 }
+        val r = rightParts.getOrElse(index) { 0 }
+        if (l != r) return l.compareTo(r)
+    }
+    return 0
+}
+
+private fun String.versionParts(): List<Int> {
+    return substringBefore('-')
+        .substringBefore('+')
+        .split('.')
+        .map { part -> part.toIntOrNull() ?: 0 }
 }
 
 @Composable

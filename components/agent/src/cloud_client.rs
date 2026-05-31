@@ -47,6 +47,7 @@ pub struct PresenceUpdateRequest {
     pub device_id: String,
     pub status: String,
     pub iroh_node_addr_json: Option<serde_json::Value>,
+    pub agent_version: Option<String>,
 }
 
 impl CloudClient {

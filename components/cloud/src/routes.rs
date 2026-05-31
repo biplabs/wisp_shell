@@ -7,10 +7,13 @@ use axum::{
 use serde_json::json;
 use tower_http::trace::TraceLayer;
 
+const REGISTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(landing_page))
         .route("/healthz", get(|| async { Json(json!({"ok": true})) }))
+        .route("/v1/version", get(version))
         .route("/privacy", get(privacy_policy))
         .route("/v1/devices/register", post(devices::register))
         .route("/v1/devices/{device_id}", get(devices::get_device))
@@ -39,6 +42,13 @@ pub fn router(state: AppState) -> Router {
 
 async fn landing_page() -> Html<&'static str> {
     Html(LANDING_PAGE_HTML)
+}
+
+async fn version() -> Json<serde_json::Value> {
+    Json(json!({
+        "service": "wispshell-cloud",
+        "version": REGISTRY_VERSION,
+    }))
 }
 
 async fn privacy_policy() -> Html<&'static str> {
@@ -579,6 +589,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn version_works() {
+        let app = router(AppState::default());
+        let response = app
+            .oneshot(Request::get("/v1/version").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
+        assert_eq!(body["service"], "wispshell-cloud");
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]

@@ -22,6 +22,8 @@ pub struct RendezvousInfo {
     pub daemon_public_key: String,
     pub status: String,
     pub iroh_node_addr: Option<serde_json::Value>,
+    pub agent_version: Option<String>,
+    pub registry_version: Option<String>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 

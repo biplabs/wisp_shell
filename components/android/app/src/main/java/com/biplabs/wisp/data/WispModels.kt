@@ -22,12 +22,16 @@ data class RendezvousInfo(
     val daemonPublicKey: String,
     val status: String,
     val irohNodeAddrJson: String?,
+    val agentVersion: String?,
+    val registryVersion: String?,
 ) {
     fun toNativeJson(): String {
         return JSONObject()
             .put("daemon_device_id", daemonDeviceId)
             .put("daemon_public_key", daemonPublicKey)
             .put("status", status)
+            .put("agent_version", agentVersion ?: JSONObject.NULL)
+            .put("registry_version", registryVersion ?: JSONObject.NULL)
             .put(
                 "iroh_node_addr",
                 irohNodeAddrJson?.let { JSONObject(it) } ?: JSONObject.NULL,
