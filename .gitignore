@@ -12,6 +12,13 @@ components/android/local.properties
 
 *.apk
 *.aab
+*.jks
+*.keystore
+*.p12
+*.pem
+*service-account*.json
+*credentials*.json
+*play-upload*.env
 .gitnexus
 .cargo/config.toml
 screenshots/
