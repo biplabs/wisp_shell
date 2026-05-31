@@ -37,6 +37,8 @@ private const val TAG = "WispTermuxTerminal"
 private const val RESIZE_SETTLE_DELAY_MS = 140L
 private const val REMOTE_RESIZE_REDRAW_DEFER_MS = 220L
 private const val REMOTE_RESIZE_REDRAW_QUIET_MS = 80L
+private const val MAX_PREDICTIVE_ECHO_BYTES = 256
+private const val LOCAL_INPUT_FLUSH_DELAY_MS = 260L
 
 @Composable
 fun WispTermuxTerminalView(
@@ -149,6 +151,10 @@ private class TermuxTerminalHolder(
     private var lastTapUpTime = 0L
     private var keyboardVisible = false
     private var keyboardAutoShown = false
+    private var pendingInputFlush: Runnable? = null
+    private val pendingRemoteInput = StringBuilder()
+    private val pendingLocalEcho = mutableListOf<Byte>()
+    private var pendingLocalErases = 0
     @Volatile private var suppressRemoteWrites = false
     @Volatile private var connectionState = ConnectionState.Connecting
 
@@ -246,11 +252,23 @@ private class TermuxTerminalHolder(
         val onBytes: (ByteArray, Boolean) -> Unit = { bytes, fromScrollback ->
             inferTitle(bytes)?.let { updateTitle(it) }
             newView.post {
+                val displayBytes = if (fromScrollback) {
+                    pendingRemoteInput.clear()
+                    pendingLocalEcho.clear()
+                    pendingLocalErases = 0
+                    bytes
+                } else {
+                    reconcileLocalEcho(bytes)
+                }
+                if (displayBytes.isEmpty()) {
+                    newView.onScreenUpdated()
+                    return@post
+                }
                 if (fromScrollback) {
                     suppressRemoteWrites = true
                 }
                 try {
-                    remoteEmulator.append(bytes, bytes.size)
+                    remoteEmulator.append(displayBytes, displayBytes.size)
                     if (shouldDeferScreenUpdate()) {
                         scheduleDeferredScreenRefresh(newView)
                     } else {
@@ -309,14 +327,19 @@ private class TermuxTerminalHolder(
             layoutListener?.let(terminalView::removeOnLayoutChangeListener)
             pendingResize?.let(terminalView::removeCallbacks)
             pendingScreenRefresh?.let(terminalView::removeCallbacks)
+            pendingInputFlush?.let(terminalView::removeCallbacks)
         }
         layoutListener = null
         pendingResize = null
         pendingScreenRefresh = null
+        pendingInputFlush = null
         deferScreenUpdatesUntil = 0L
         lastSentColumns = null
         lastSentRows = null
         keyboardAutoShown = false
+        pendingRemoteInput.clear()
+        pendingLocalEcho.clear()
+        pendingLocalErases = 0
         connection?.close()
         dummySession?.finishIfRunning()
         connection = null
@@ -335,7 +358,13 @@ private class TermuxTerminalHolder(
         }
     }
 
-    private fun sendRemote(text: String): Boolean {
+    private fun sendRemote(text: String, predictiveEcho: Boolean = false): Boolean {
+        if (predictiveEcho && shouldPredictLocalEcho(text)) {
+            appendLocalEcho(text, queueRemoteInput = true)
+            scheduleInputFlush()
+            return true
+        }
+        flushPendingInput()
         connection?.sendInput(text)
         return true
     }
@@ -345,7 +374,7 @@ private class TermuxTerminalHolder(
     }
 
     fun sendInputFromIme(text: String): Boolean {
-        return sendRemote(text)
+        return sendRemote(text, predictiveEcho = true)
     }
 
     private fun showKeyboard() {
@@ -422,6 +451,113 @@ private class TermuxTerminalHolder(
             return false
         }
         return sendRemote(String(Character.toChars(codePoint)))
+    }
+
+    private fun shouldPredictLocalEcho(text: String): Boolean {
+        if (connectionState != ConnectionState.Attached) return false
+        if (text.isEmpty()) return false
+        if (pendingLocalEcho.size >= MAX_PREDICTIVE_ECHO_BYTES) return false
+        return text.all { it in ' '..'~' || it == '\u007f' }
+    }
+
+    private fun appendLocalEcho(text: String, queueRemoteInput: Boolean = false) {
+        val remoteEmulator = emulator ?: return
+        val terminalView = view ?: return
+        if (text == "\u007f") {
+            appendLocalBackspace(remoteEmulator, terminalView, queueRemoteInput)
+            return
+        }
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        if (pendingLocalEcho.size + bytes.size > MAX_PREDICTIVE_ECHO_BYTES) {
+            pendingRemoteInput.clear()
+            pendingLocalEcho.clear()
+            return
+        }
+        if (queueRemoteInput) {
+            pendingRemoteInput.append(text)
+        }
+        pendingLocalEcho.addAll(bytes.toList())
+        remoteEmulator.append(bytes, bytes.size)
+        terminalView.onScreenUpdated()
+    }
+
+    private fun appendLocalBackspace(
+        remoteEmulator: TerminalEmulator,
+        terminalView: TerminalView,
+        queueRemoteInput: Boolean,
+    ) {
+        if (pendingRemoteInput.isNotEmpty()) {
+            pendingRemoteInput.deleteAt(pendingRemoteInput.length - 1)
+            if (pendingLocalEcho.isNotEmpty()) {
+                pendingLocalEcho.removeAt(pendingLocalEcho.lastIndex)
+            }
+        } else if (queueRemoteInput) {
+            pendingRemoteInput.append("\u007f")
+            pendingLocalErases += 1
+        }
+        val bytes = "\b \b".toByteArray(Charsets.UTF_8)
+        remoteEmulator.append(bytes, bytes.size)
+        terminalView.onScreenUpdated()
+    }
+
+    private fun scheduleInputFlush() {
+        val terminalView = view ?: return
+        pendingInputFlush?.let(terminalView::removeCallbacks)
+        pendingInputFlush = Runnable {
+            pendingInputFlush = null
+            flushPendingInput()
+        }.also { terminalView.postDelayed(it, LOCAL_INPUT_FLUSH_DELAY_MS) }
+    }
+
+    private fun flushPendingInput() {
+        val terminalView = view
+        if (terminalView != null) {
+            pendingInputFlush?.let(terminalView::removeCallbacks)
+        }
+        pendingInputFlush = null
+        if (pendingRemoteInput.isEmpty()) return
+        val text = pendingRemoteInput.toString()
+        pendingRemoteInput.clear()
+        connection?.sendInput(text)
+    }
+
+    private fun reconcileLocalEcho(bytes: ByteArray): ByteArray {
+        var consumed = consumeRemoteErases(bytes)
+        while (
+            consumed < bytes.size &&
+            pendingLocalEcho.isNotEmpty() &&
+            pendingLocalEcho.first() == bytes[consumed]
+        ) {
+            pendingLocalEcho.removeAt(0)
+            consumed += 1
+        }
+
+        if (consumed == bytes.size) return ByteArray(0)
+        val remaining = bytes.copyOfRange(consumed, bytes.size)
+        if (pendingLocalEcho.isEmpty()) return remaining
+
+        val rollback = buildString {
+            repeat(pendingLocalEcho.size) {
+                append("\b \b")
+            }
+        }.toByteArray(Charsets.UTF_8)
+        pendingLocalEcho.clear()
+        return rollback + remaining
+    }
+
+    private fun consumeRemoteErases(bytes: ByteArray): Int {
+        var consumed = 0
+        while (
+            pendingLocalErases > 0 &&
+            consumed + 2 < bytes.size &&
+            bytes[consumed] == '\b'.code.toByte() &&
+            bytes[consumed + 1] == ' '.code.toByte() &&
+            bytes[consumed + 2] == '\b'.code.toByte()
+        ) {
+            consumed += 3
+            pendingLocalErases -= 1
+        }
+        return consumed
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean = false
@@ -579,22 +715,49 @@ private class TerminalInputConnection(
     target: InputConnection,
     private val onInput: (String) -> Boolean,
 ) : InputConnectionWrapper(target, true) {
+    private var composingText = ""
+
     override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
         val value = text?.toString().orEmpty()
+        if (composingText.isNotEmpty()) {
+            val previous = composingText
+            composingText = ""
+            if (value == previous || previous.startsWith(value)) return true
+            return value.removePrefix(previous).let { it.isEmpty() || onInput(it) }
+        }
         return value.isEmpty() || onInput(value)
     }
 
     override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+        val value = text?.toString().orEmpty()
+        if (value == composingText) return true
+        if (value.startsWith(composingText)) {
+            val added = value.substring(composingText.length)
+            composingText = value
+            return added.isEmpty() || onInput(added)
+        }
+        if (composingText.startsWith(value)) {
+            repeat(composingText.length - value.length) { onInput("\u007f") }
+            composingText = value
+            return true
+        }
+        composingText = value
         return true
     }
 
     override fun finishComposingText(): Boolean {
+        composingText = ""
         return true
     }
 
     override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
         if (beforeLength > 0) {
-            repeat(beforeLength) { onInput("\u007f") }
+            repeat(beforeLength) {
+                if (composingText.isNotEmpty()) {
+                    composingText = composingText.dropLast(1)
+                }
+                onInput("\u007f")
+            }
             return true
         }
         return super.deleteSurroundingText(beforeLength, afterLength)
@@ -610,7 +773,12 @@ private class TerminalInputConnection(
         }
         return when (event.keyCode) {
             KeyEvent.KEYCODE_ENTER -> onInput("\r")
-            KeyEvent.KEYCODE_DEL -> onInput("\u007f")
+            KeyEvent.KEYCODE_DEL -> {
+                if (composingText.isNotEmpty()) {
+                    composingText = composingText.dropLast(1)
+                }
+                onInput("\u007f")
+            }
             KeyEvent.KEYCODE_TAB -> onInput("\t")
             KeyEvent.KEYCODE_ESCAPE -> onInput("\u001b")
             else -> {
