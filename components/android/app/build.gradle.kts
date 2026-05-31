@@ -26,7 +26,7 @@ android {
         applicationId = "com.biplabs.wisp"
         minSdk = 26
         targetSdk = 35
-        versionCode = ciVersionCode ?: 2
+        versionCode = ciVersionCode ?: 3
         versionName = ciVersionName ?: "0.1.1"
     }
 
