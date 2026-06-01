@@ -10,8 +10,12 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,7 +23,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -35,7 +45,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -123,71 +136,94 @@ fun TerminalScreen(
     Scaffold(
         contentWindowInsets = WindowInsets(0.dp),
         topBar = {
-            Surface(color = MaterialTheme.colorScheme.surface) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (tabs.isEmpty()) {
-                        Spacer(Modifier.weight(1f))
-                    } else {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(rememberScrollState()),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            tabs.forEach { tab ->
-                                TabChip(
-                                    title = "${tab.daemon.displayName}: ${tab.title ?: tabTitle(tab.sessionName)}",
-                                    selected = tab.id == selectedTabId,
-                                    onSelect = { selectedTabId = tab.id },
-                                    onClose = {
-                                        val index = tabs.indexOfFirst { it.id == tab.id }
-                                        val nextTabs = tabs.filterNot { it.id == tab.id }
-                                        tabs = nextTabs
-                                        if (selectedTabId == tab.id) {
-                                            selectedTabId = nextTabs
-                                                .getOrNull((index - 1).coerceAtLeast(0))
-                                                ?.id
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 4.dp
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (tabs.isEmpty()) {
+                            Spacer(Modifier.weight(1f))
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .horizontalScroll(rememberScrollState()),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                tabs.forEach { tab ->
+                                    TabChip(
+                                        title = "${tab.daemon.displayName}: ${tab.title ?: tabTitle(tab.sessionName)}",
+                                        selected = tab.id == selectedTabId,
+                                        onSelect = { selectedTabId = tab.id },
+                                        onClose = {
+                                            val index = tabs.indexOfFirst { it.id == tab.id }
+                                            val nextTabs = tabs.filterNot { it.id == tab.id }
+                                            tabs = nextTabs
+                                            if (selectedTabId == tab.id) {
+                                                selectedTabId = nextTabs
+                                                    .getOrNull((index - 1).coerceAtLeast(0))
+                                                    ?.id
+                                            }
+                                        },
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        val candidates = tabCandidates(agents)
+                                        when (candidates.size) {
+                                            0 -> showAgentPicker = true
+                                            1 -> {
+                                                val tab = newTab(candidates.first(), tabs)
+                                                tabs = tabs + tab
+                                                selectedTabId = tab.id
+                                            }
+                                            else -> showAgentPicker = true
                                         }
                                     },
-                                )
-                            }
-                            TextButton(onClick = {
-                                val candidates = tabCandidates(agents)
-                                when (candidates.size) {
-                                    0 -> showAgentPicker = true
-                                    1 -> {
-                                        val tab = newTab(candidates.first(), tabs)
-                                        tabs = tabs + tab
-                                        selectedTabId = tab.id
-                                    }
-                                    else -> showAgentPicker = true
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .size(32.dp)
+                                        .background(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                ) {
+                                    Text(
+                                        text = "+",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
-                            }) {
-                                Text("+")
                             }
                         }
-                    }
-                    WifiStatusIcon(
-                        status = wifiStatus,
-                        transportPath = selectedTransportPath,
-                        onPathClick = {
-                            if (selectedTransportPath != null || selectedTab != null) {
-                                showPathDiagnostics = true
-                            }
-                        },
-                    )
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "Settings",
+                        WifiStatusIcon(
+                            status = wifiStatus,
+                            transportPath = selectedTransportPath,
+                            onPathClick = {
+                                if (selectedTransportPath != null || selectedTab != null) {
+                                    showPathDiagnostics = true
+                                }
+                            },
                         )
+                        IconButton(
+                            onClick = { showSettings = true },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
                 }
             }
         },
@@ -505,75 +541,117 @@ private fun TerminalShortcutBar(
     }
 
     Surface(
-        tonalElevation = 2.dp,
+        tonalElevation = 6.dp,
         color = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = 12.dp, vertical = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             if (inputMode == TerminalInputMode.Line) {
                 val textColor = MaterialTheme.colorScheme.onSurface
-                BasicTextField(
-                    value = lineInput,
-                    onValueChange = onLineInputChanged,
-                    enabled = enabled,
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = textColor),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { onSendLine() }),
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(lineFocusRequester)
-                        .onFocusChanged { lineInputFocused = it.isFocused }
-                        .padding(1.dp),
-                    decorationBox = { innerTextField ->
-                        if (lineInput.isEmpty()) {
-                            Text(
-                                text = ">_ cmd",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        innerTextField()
-                    },
-                )
-                HorizontalDivider()
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .border(
+                            width = if (lineInputFocused) 1.dp else 0.dp,
+                            color = if (lineInputFocused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    BasicTextField(
+                        value = lineInput,
+                        onValueChange = onLineInputChanged,
+                        enabled = enabled,
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = textColor,
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { onSendLine() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(lineFocusRequester)
+                            .onFocusChanged { lineInputFocused = it.isFocused },
+                        decorationBox = { innerTextField ->
+                            if (lineInput.isEmpty()) {
+                                Text(
+                                    text = ">_ Enter terminal command...",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            innerTextField()
+                        },
+                    )
+                }
             }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .height(32.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TerminalShortcutButton(
-                    label = "Ctrl-C",
                     enabled = enabled,
                     modifier = Modifier.weight(1f),
                     onClick = { onSend("\u0003") },
-                )
+                ) {
+                    Text(
+                        text = "Ctrl-C",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    )
+                }
                 TerminalShortcutButton(
-                    label = "Right",
-                    enabled = enabled,
-                    modifier = Modifier.weight(1f),
-                    onClick = { onSend("\u001b[C") },
-                )
-                TerminalShortcutButton(
-                    label = "Up",
                     enabled = enabled,
                     modifier = Modifier.weight(1f),
                     onClick = { onSend("\u001b[A") },
-                )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Up",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 TerminalShortcutButton(
-                    label = "Down",
                     enabled = enabled,
                     modifier = Modifier.weight(1f),
                     onClick = { onSend("\u001b[B") },
-                )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Down",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                TerminalShortcutButton(
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSend("\u001b[C") },
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Right",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
@@ -581,18 +659,23 @@ private fun TerminalShortcutBar(
 
 @Composable
 private fun TerminalShortcutButton(
-    label: String,
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    content: @Composable () -> Unit,
 ) {
-    OutlinedButton(
+    Button(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier.fillMaxHeight(),
-        contentPadding = PaddingValues(horizontal = 6.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(6.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     ) {
-        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        content()
     }
 }
 
@@ -698,18 +781,18 @@ private fun WifiStatusIcon(
         else -> null
     }
     val latencyLabel = transportPath?.latencyMs?.let { "${it} ms" }
-    val transportTextStyle = MaterialTheme.typography.labelSmall.copy(lineHeight = 11.sp)
+    val transportTextStyle = MaterialTheme.typography.labelMedium.copy(lineHeight = 14.sp)
     Row(
-        modifier = Modifier.height(40.dp),
+        modifier = Modifier.height(36.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(36.dp),
             contentAlignment = Alignment.Center,
         ) {
             Canvas(
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(20.dp)
                     .semantics { contentDescription = label },
             ) {
                 val wifiPath = Path().apply {
@@ -741,15 +824,15 @@ private fun WifiStatusIcon(
             ) {
                 Text(
                     text = transportLabel,
-                    style = transportTextStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = transportTextStyle.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
                 if (latencyLabel != null) {
                     Text(
                         text = latencyLabel,
                         style = transportTextStyle,
-                        color = MaterialTheme.colorScheme.outline,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                     )
                 }
@@ -768,58 +851,195 @@ private fun AgentPickerContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.secondary
+                        )
+                    ),
+                    shape = RoundedCornerShape(18.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = ">_",
+                color = MaterialTheme.colorScheme.onPrimary,
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Text(
             text = "Pick a Shell",
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.ExtraBold),
+            color = MaterialTheme.colorScheme.onBackground
         )
         Text(
-            text = "Choose an online agent to open a terminal tab.",
+            text = "Choose a paired Linux daemon to open a terminal tab.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp, bottom = 28.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp, bottom = 28.dp)
         )
+
         if (error != null && agents.isNotEmpty()) {
-            ListItem(
-                headlineContent = { Text("Registry unavailable") },
-                supportingContent = { Text(error) },
-            )
-            HorizontalDivider()
-        }
-        agents.forEach { daemon ->
-            OutlinedButton(
-                onClick = { onOpen(daemon) },
-                enabled = daemon.status == "online",
-                border = BorderStroke(2.dp, MaterialTheme.colorScheme.primary),
-                modifier = Modifier
-                    .fillMaxWidth(0.72f)
-                    .height(76.dp),
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = daemon.displayName,
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                    Text(
-                        text = daemon.status,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
+                ListItem(
+                    headlineContent = { Text("Registry issue", fontWeight = FontWeight.Bold) },
+                    supportingContent = { Text(error) },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
             }
         }
-        if (agents.isEmpty()) {
-            ListItem(
-                headlineContent = { Text(if (error == null) "No open tabs" else "Registry unavailable") },
-                supportingContent = { Text(error ?: "Open a tab from a paired agent, or pair a new agent.") },
-            )
-            Button(
-                onClick = onPair,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            ) {
-                Text("Pair agent")
+
+        Column(
+            modifier = Modifier.fillMaxWidth(0.9f),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            agents.forEach { daemon ->
+                val isOnline = daemon.status == "online"
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = isOnline) { onOpen(daemon) },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isOnline) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        }
+                    ),
+                    border = if (isOnline) {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    } else {
+                        null
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(
+                                    color = if (isOnline) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "$",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                ),
+                                color = if (isOnline) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = daemon.displayName,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(
+                                            color = if (isOnline) {
+                                                Color(0x00, 0xE5, 0xFF) // Neon Cyan
+                                            } else {
+                                                MaterialTheme.colorScheme.outline
+                                            },
+                                            shape = CircleShape
+                                        )
+                                )
+                                Text(
+                                    text = daemon.status.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = if (isOnline) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (agents.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = if (error == null) "No paired daemons" else "Registry unreachable",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = error ?: "Pair an agent to open interactive terminal sessions from this device.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = onPair,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Pair Agent", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = onPair) {
+                    Text("+ Pair another agent", fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -964,22 +1184,55 @@ private fun TabChip(
     onSelect: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val colors = if (selected) {
-        ButtonDefaults.filledTonalButtonColors()
+    val borderStroke = if (selected) {
+        BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
     } else {
-        ButtonDefaults.textButtonColors()
+        BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
     }
-    TextButton(
-        onClick = onSelect,
-        colors = colors,
-        contentPadding = PaddingValues(horizontal = 8.dp),
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        Color.Transparent
+    }
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = containerColor,
+        border = borderStroke,
+        modifier = Modifier
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .clickable { onSelect() }
     ) {
-        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.width(4.dp))
-        Text(
-            text = "x",
-            modifier = Modifier.clickable(onClick = onClose),
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                ),
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 140.dp)
+            )
+
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Close tab",
+                modifier = Modifier
+                    .size(15.dp)
+                    .clickable(onClick = onClose),
+                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -1143,10 +1396,27 @@ private fun String.majorMinorVersionParts(): Pair<Int, Int>? {
 
 @Composable
 private fun DetailLine(label: String, value: String) {
-    Text(
-        text = "$label: $value",
-        style = MaterialTheme.typography.bodyMedium,
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold
+            ),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 private data class P2pDetails(

@@ -4,9 +4,11 @@ import android.app.Activity
 import android.content.Context
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -15,8 +17,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.biplabs.wisp.data.BoundDaemon
 import com.biplabs.wisp.data.TerminalInputMode
@@ -29,13 +36,91 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegistrySetupScreen(repository: WispRepository, onDone: () -> Unit) {
-    RegistryUrlForm(
-        title = "Set Registry URL",
-        actionLabel = "Continue",
-        repository = repository,
-        onBack = null,
-        onSaved = onDone,
-    )
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.secondary
+                            )
+                        ),
+                        shape = RoundedCornerShape(24.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = ">_",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.headlineLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "WispShell",
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            )
+
+            Text(
+                text = "Connect to your remote Linux daemon securely",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+            )
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .padding(vertical = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "Configure Registry",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    RegistryUrlFormContent(
+                        repository = repository,
+                        actionLabel = "Continue",
+                        onSaved = onDone
+                    )
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -478,14 +563,26 @@ private fun RegistryUrlForm(
         Column(
             modifier = Modifier
                 .padding(padding)
-                .padding(16.dp)
+                .padding(24.dp)
                 .fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            RegistryUrlFormContent(
-                repository = repository,
-                actionLabel = actionLabel,
-                onSaved = onSaved,
-            )
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(0.9f),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    RegistryUrlFormContent(
+                        repository = repository,
+                        actionLabel = actionLabel,
+                        onSaved = onSaved,
+                    )
+                }
+            }
         }
     }
 }
@@ -503,7 +600,7 @@ private fun RegistryUrlFormContent(
     val canSave = normalizedRegistryUrl.isNotBlank() &&
         (!requireChanged || normalizedRegistryUrl != repository.cloudUrl)
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         OutlinedTextField(
             value = registryUrl,
             onValueChange = {
@@ -511,8 +608,15 @@ private fun RegistryUrlFormContent(
                 error = null
             },
             label = { Text("Registry URL") },
+            placeholder = { Text("https://example.com") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
+            isError = error != null,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+            )
         )
 
         Button(
@@ -520,19 +624,29 @@ private fun RegistryUrlFormContent(
                 if (!normalizedRegistryUrl.startsWith("https://") &&
                     !normalizedRegistryUrl.startsWith("http://")
                 ) {
-                    error = "Enter a full URL"
+                    error = "Enter a valid URL (starting with http:// or https://)"
                     return@Button
                 }
                 repository.updateRegistryUrl(normalizedRegistryUrl)
                 onSaved()
             },
             enabled = canSave,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
         ) {
-            Text(actionLabel)
+            Text(
+                text = actionLabel,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
         }
 
         error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error)
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }
