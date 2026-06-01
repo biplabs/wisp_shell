@@ -352,6 +352,13 @@ private fun TerminalInputModePicker(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         TerminalInputModeOption(
+            mode = TerminalInputMode.Auto,
+            selected = selected == TerminalInputMode.Auto,
+            title = "Auto",
+            description = "Choose sync, predictive, or line input from the current terminal latency.",
+            onSelected = onSelected,
+        )
+        TerminalInputModeOption(
             mode = TerminalInputMode.Sync,
             selected = selected == TerminalInputMode.Sync,
             title = "Sync",

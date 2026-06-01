@@ -411,6 +411,7 @@ private class TermuxTerminalHolder(
 
     fun sendInputFromIme(text: String): Boolean {
         return when (inputMode) {
+            TerminalInputMode.Auto -> sendRemote(text, predictiveEcho = true)
             TerminalInputMode.Sync -> sendRemote(text)
             TerminalInputMode.Line -> true
             TerminalInputMode.Predictive -> sendRemote(text, predictiveEcho = true)

@@ -11,6 +11,7 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 enum class TerminalInputMode {
+    Auto,
     Sync,
     Line,
     Predictive,

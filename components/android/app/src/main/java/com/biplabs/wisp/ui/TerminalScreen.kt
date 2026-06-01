@@ -248,6 +248,7 @@ fun TerminalScreen(
             } else {
                 tabs.forEach { tab ->
                     val active = tab.id == selectedTabId && !showSettings
+                    val effectiveInputMode = inputMode.effectiveInputMode(transportPaths[tab.id])
                     key(tab.id) {
                         TerminalTabPane(
                             repository = repository,
@@ -271,7 +272,7 @@ fun TerminalScreen(
                             onRendezvousChanged = { info ->
                                 rendezvousByTab = rendezvousByTab + (tab.id to info)
                             },
-                            inputMode = inputMode,
+                            inputMode = effectiveInputMode,
                         )
                     }
                 }
@@ -316,6 +317,18 @@ fun TerminalScreen(
                 onPair()
             },
         )
+    }
+}
+
+private fun TerminalInputMode.effectiveInputMode(
+    transportPath: TransportPathStatus?,
+): TerminalInputMode {
+    if (this != TerminalInputMode.Auto) return this
+    val latencyMs = transportPath?.latencyMs ?: return TerminalInputMode.Predictive
+    return when {
+        latencyMs <= AUTO_SYNC_MAX_LATENCY_MS -> TerminalInputMode.Sync
+        latencyMs <= AUTO_PREDICTIVE_MAX_LATENCY_MS -> TerminalInputMode.Predictive
+        else -> TerminalInputMode.Line
     }
 }
 
@@ -1245,6 +1258,9 @@ private fun newTab(daemon: BoundDaemon, existing: List<SavedTerminalTab>): Saved
         daemon = daemon,
     )
 }
+
+private const val AUTO_SYNC_MAX_LATENCY_MS = 80
+private const val AUTO_PREDICTIVE_MAX_LATENCY_MS = 220
 
 private fun tabCandidates(agents: List<BoundDaemon>): List<BoundDaemon> {
     return agents.filter { it.status == "online" }.ifEmpty { agents }
