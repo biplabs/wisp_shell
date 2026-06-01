@@ -768,31 +768,38 @@ private class TerminalInputConnection(
 ) : InputConnectionWrapper(target, true) {
     private var composingText = ""
 
+    private fun syncComposingText(newValue: String) {
+        if (composingText == newValue) return
+
+        var commonPrefixLength = 0
+        val minLength = minOf(composingText.length, newValue.length)
+        while (commonPrefixLength < minLength && composingText[commonPrefixLength] == newValue[commonPrefixLength]) {
+            commonPrefixLength++
+        }
+
+        val deleteCount = composingText.length - commonPrefixLength
+        if (deleteCount > 0) {
+            repeat(deleteCount) { onInput("\u007f") }
+        }
+
+        val added = newValue.substring(commonPrefixLength)
+        if (added.isNotEmpty()) {
+            onInput(added)
+        }
+
+        composingText = newValue
+    }
+
     override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
         val value = text?.toString().orEmpty()
-        if (composingText.isNotEmpty()) {
-            val previous = composingText
-            composingText = ""
-            if (value == previous || previous.startsWith(value)) return true
-            return value.removePrefix(previous).let { it.isEmpty() || onInput(it) }
-        }
-        return value.isEmpty() || onInput(value)
+        syncComposingText(value)
+        composingText = ""
+        return true
     }
 
     override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
         val value = text?.toString().orEmpty()
-        if (value == composingText) return true
-        if (value.startsWith(composingText)) {
-            val added = value.substring(composingText.length)
-            composingText = value
-            return added.isEmpty() || onInput(added)
-        }
-        if (composingText.startsWith(value)) {
-            repeat(composingText.length - value.length) { onInput("\u007f") }
-            composingText = value
-            return true
-        }
-        composingText = value
+        syncComposingText(value)
         return true
     }
 
