@@ -131,6 +131,16 @@ impl Callback {
     }
 }
 
+fn transport_name(path: &iroh::endpoint::PathInfo) -> &'static str {
+    if path.is_relay() {
+        "relay"
+    } else if path.is_ip() {
+        "direct"
+    } else {
+        "unknown"
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_initializeAndroidContext(
     mut env: JNIEnv<'_>,
@@ -285,18 +295,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
             loop {
                 let snapshot = connection_info
                     .selected_path()
-                    .map(|path| {
-                        let transport = if path.is_relay() {
-                            "relay"
-                        } else if path.is_ip() {
-                            "direct"
-                        } else {
-                            "unknown"
-                        }
-                        .to_string();
-                        let latency_ms = path.rtt().map(|rtt| rtt.as_millis());
-                        (transport, latency_ms)
-                    })
+                    .map(|path| (transport_name(&path).to_string(), path.rtt().map(|rtt| rtt.as_millis())))
                     .unwrap_or_else(|| ("unknown".to_string(), None));
                 if last_snapshot.as_ref() != Some(&snapshot) {
                     path_callback.transport_path(&snapshot.0, snapshot.1);

@@ -19,12 +19,14 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.biplabs.wisp.data.TerminalInputMode
 import com.biplabs.wisp.data.RendezvousInfo
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalOutput
@@ -55,6 +57,7 @@ fun WispTermuxTerminalView(
     clientPrivateKey: String? = null,
     clientDeviceId: String? = null,
     bindingId: String? = null,
+    inputMode: TerminalInputMode = TerminalInputMode.Predictive,
     host: String = "127.0.0.1",
     port: Int = 7777,
     onConnectionState: (ConnectionState) -> Unit = {},
@@ -62,6 +65,7 @@ fun WispTermuxTerminalView(
     onTransportPathChanged: (TransportPathStatus?) -> Unit = {},
     onTitleChanged: (String) -> Unit = {},
     onSendInputReady: (((String) -> Unit)?) -> Unit = {},
+    onKeyboardRequest: () -> Unit = {},
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val holder = remember(sessionName, reconnectNonce, rendezvous?.irohNodeAddrJson, clientDeviceId, bindingId, host, port) {
@@ -69,6 +73,7 @@ fun WispTermuxTerminalView(
             host,
             port,
             sessionName,
+            inputMode,
             rendezvous,
             clientPrivateKey,
             clientDeviceId,
@@ -77,7 +82,11 @@ fun WispTermuxTerminalView(
             onConnectionError,
             onTransportPathChanged,
             onTitleChanged,
+            onKeyboardRequest,
         )
+    }
+    LaunchedEffect(holder, inputMode) {
+        holder.setInputMode(inputMode)
     }
     DisposableEffect(lifecycleOwner, holder) {
         val observer = LifecycleEventObserver { _, event ->
@@ -136,6 +145,7 @@ private class TermuxTerminalHolder(
     private val host: String,
     private val port: Int,
     private val sessionName: String,
+    private var inputMode: TerminalInputMode,
     private val rendezvous: RendezvousInfo?,
     private val clientPrivateKey: String?,
     private val clientDeviceId: String?,
@@ -144,6 +154,7 @@ private class TermuxTerminalHolder(
     private val onConnectionError: (String) -> Unit,
     private val onTransportPathChanged: (TransportPathStatus?) -> Unit,
     private val onTitleChanged: (String) -> Unit,
+    private val onKeyboardRequest: () -> Unit,
 ) : TerminalSessionClient, TerminalViewClient {
     private var view: TerminalView? = null
     private var inputView: TerminalInputEditText? = null
@@ -185,7 +196,7 @@ private class TermuxTerminalHolder(
                 val now = event.eventTime
                 if (now - lastTapUpTime <= ViewConfiguration.getDoubleTapTimeout()) {
                     lastTapUpTime = 0L
-                    toggleKeyboard()
+                    requestKeyboard()
                 } else {
                     lastTapUpTime = now
                 }
@@ -367,8 +378,18 @@ private class TermuxTerminalHolder(
     fun setActive(active: Boolean) {
         val terminalView = view ?: return
         terminalView.isEnabled = active
-        if (active && !keyboardAutoShown) {
+        if (active && !keyboardAutoShown && inputMode != TerminalInputMode.Line) {
             keyboardAutoShown = true
+            showKeyboard()
+        }
+    }
+
+    fun setInputMode(mode: TerminalInputMode) {
+        if (inputMode == mode) return
+        inputMode = mode
+        if (mode == TerminalInputMode.Line) {
+            hideKeyboard()
+        } else if (view?.isEnabled == true) {
             showKeyboard()
         }
     }
@@ -389,7 +410,11 @@ private class TermuxTerminalHolder(
     }
 
     fun sendInputFromIme(text: String): Boolean {
-        return sendRemote(text, predictiveEcho = true)
+        return when (inputMode) {
+            TerminalInputMode.Sync -> sendRemote(text)
+            TerminalInputMode.Line -> true
+            TerminalInputMode.Predictive -> sendRemote(text, predictiveEcho = true)
+        }
     }
 
     private fun showKeyboard() {
@@ -422,6 +447,14 @@ private class TermuxTerminalHolder(
             hideKeyboard()
         } else {
             showKeyboard()
+        }
+    }
+
+    private fun requestKeyboard() {
+        if (inputMode == TerminalInputMode.Line) {
+            onKeyboardRequest()
+        } else {
+            toggleKeyboard()
         }
     }
 

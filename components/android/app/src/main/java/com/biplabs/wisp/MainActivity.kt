@@ -13,7 +13,6 @@ import com.biplabs.wisp.bridge.WispNative
 import com.biplabs.wisp.data.WispRepository
 import com.biplabs.wisp.ui.PairScreen
 import com.biplabs.wisp.ui.RegistrySetupScreen
-import com.biplabs.wisp.ui.SettingsScreen
 import com.biplabs.wisp.ui.TerminalScreen
 
 class MainActivity : ComponentActivity() {
@@ -37,11 +36,6 @@ class MainActivity : ComponentActivity() {
                         repository = repository,
                         onDone = { screen = Screen.Workspace },
                     )
-                    Screen.Settings -> SettingsScreen(
-                        repository = repository,
-                        onBack = { screen = Screen.Workspace },
-                        onPair = { screen = Screen.Pair },
-                    )
                     Screen.Workspace -> TerminalScreen(
                         repository = repository,
                         onPair = { screen = Screen.Pair },
@@ -56,5 +50,4 @@ enum class Screen {
     RegistrySetup,
     Workspace,
     Pair,
-    Settings,
 }

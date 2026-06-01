@@ -12,6 +12,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -20,12 +24,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,6 +46,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.biplabs.wisp.data.BoundDaemon
 import com.biplabs.wisp.data.RendezvousInfo
 import com.biplabs.wisp.data.SavedTerminalTab
+import com.biplabs.wisp.data.TerminalInputMode
 import com.biplabs.wisp.data.WispRepository
 import com.biplabs.wisp.terminal.ConnectionState
 import com.biplabs.wisp.terminal.TransportPathStatus
@@ -44,6 +55,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
 
 @Composable
 fun TerminalScreen(
@@ -57,8 +71,13 @@ fun TerminalScreen(
     var showAgentPicker by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var transportPaths by remember { mutableStateOf<Map<String, TransportPathStatus>>(emptyMap()) }
+    var rendezvousByTab by remember { mutableStateOf<Map<String, RendezvousInfo?>>(emptyMap()) }
+    var showPathDiagnostics by remember { mutableStateOf(false) }
     val wifiStatus = rememberWifiStatus()
+    val selectedTab = selectedTabId?.let { id -> tabs.firstOrNull { it.id == id } }
     val selectedTransportPath = selectedTabId?.let { transportPaths[it] }
+    val selectedRendezvous = selectedTabId?.let { rendezvousByTab[it] }
+    val inputMode = repository.terminalInputMode
     val activity = LocalContext.current.findActivity()
 
     DisposableEffect(activity) {
@@ -154,7 +173,15 @@ fun TerminalScreen(
                             }
                         }
                     }
-                    WifiStatusIcon(status = wifiStatus, transportPath = selectedTransportPath)
+                    WifiStatusIcon(
+                        status = wifiStatus,
+                        transportPath = selectedTransportPath,
+                        onPathClick = {
+                            if (selectedTransportPath != null || selectedTab != null) {
+                                showPathDiagnostics = true
+                            }
+                        },
+                    )
                     IconButton(onClick = { showSettings = true }) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
@@ -184,7 +211,7 @@ fun TerminalScreen(
                 )
             } else {
                 tabs.forEach { tab ->
-                    val active = tab.id == selectedTabId
+                    val active = tab.id == selectedTabId && !showSettings
                     key(tab.id) {
                         TerminalTabPane(
                             repository = repository,
@@ -205,6 +232,10 @@ fun TerminalScreen(
                                     transportPaths + (tab.id to path)
                                 }
                             },
+                            onRendezvousChanged = { info ->
+                                rendezvousByTab = rendezvousByTab + (tab.id to info)
+                            },
+                            inputMode = inputMode,
                         )
                     }
                 }
@@ -230,10 +261,20 @@ fun TerminalScreen(
         )
     }
 
+    if (showPathDiagnostics && selectedTab != null) {
+        PathDiagnosticsDialog(
+            daemon = selectedTab.daemon,
+            rendezvous = selectedRendezvous,
+            transportPath = selectedTransportPath,
+            wifiStatus = wifiStatus,
+            onDismiss = { showPathDiagnostics = false },
+        )
+    }
+
     if (showSettings) {
-        SettingsDialog(
+        SettingsScreen(
             repository = repository,
-            onDismiss = { showSettings = false },
+            onBack = { showSettings = false },
             onPair = {
                 showSettings = false
                 onPair()
@@ -250,6 +291,8 @@ private fun TerminalTabPane(
     modifier: Modifier,
     onTitleChanged: (String) -> Unit,
     onTransportPathChanged: (TransportPathStatus?) -> Unit,
+    onRendezvousChanged: (RendezvousInfo?) -> Unit,
+    inputMode: TerminalInputMode,
 ) {
     var rendezvous by remember(tab.daemon.bindingId) { mutableStateOf<RendezvousInfo?>(null) }
     var error by remember(tab.daemon.bindingId) { mutableStateOf<String?>(null) }
@@ -259,9 +302,13 @@ private fun TerminalTabPane(
     var connectionError by remember(tab.id) { mutableStateOf<String?>(null) }
     var showConnectionDialog by remember(tab.id) { mutableStateOf(false) }
     var sendTerminalInput by remember(tab.id) { mutableStateOf<((String) -> Unit)?>(null) }
+    var lineInput by remember(tab.id) { mutableStateOf("") }
+    var lineFocusNonce by remember(tab.id) { mutableIntStateOf(0) }
+    var lineKeyboardToggleNonce by remember(tab.id) { mutableIntStateOf(0) }
 
     LaunchedEffect(tab.daemon.bindingId, retryNonce) {
         rendezvous = null
+        onRendezvousChanged(null)
         error = null
         connectionError = null
         connectionState = ConnectionState.Connecting
@@ -272,6 +319,7 @@ private fun TerminalTabPane(
                 withContext(Dispatchers.IO) { repository.rendezvous(tab.daemon) }
             }.onSuccess {
                 rendezvous = it
+                onRendezvousChanged(it)
                 return@LaunchedEffect
             }.onFailure {
                 lastError = it
@@ -292,6 +340,19 @@ private fun TerminalTabPane(
         if (connectionState == ConnectionState.Attached && connectionError == null) {
             delay(1_500)
             showConnectionDialog = false
+        }
+    }
+
+    LaunchedEffect(active, inputMode, connectionState, connectionError, showConnectionDialog, sendTerminalInput) {
+        if (
+            active &&
+            inputMode == TerminalInputMode.Line &&
+            connectionState == ConnectionState.Attached &&
+            connectionError == null &&
+            !showConnectionDialog &&
+            sendTerminalInput != null
+        ) {
+            lineFocusNonce += 1
         }
     }
 
@@ -325,6 +386,7 @@ private fun TerminalTabPane(
                     clientPrivateKey = repository.clientPrivateKey,
                     clientDeviceId = repository.clientDeviceId,
                     bindingId = tab.daemon.bindingId,
+                    inputMode = inputMode,
                     modifier = Modifier.fillMaxSize(),
                     onConnectionState = { state ->
                         if (state == ConnectionState.Connecting || state == ConnectionState.Attached) {
@@ -346,6 +408,9 @@ private fun TerminalTabPane(
                     onSendInputReady = { sender ->
                         sendTerminalInput = sender
                     },
+                    onKeyboardRequest = {
+                        lineKeyboardToggleNonce += 1
+                    },
                 )
 
                 error != null -> Column(
@@ -361,10 +426,22 @@ private fun TerminalTabPane(
                 }
             }
         }
-        TerminalShortcutBar(
-            enabled = active && sendTerminalInput != null,
-            onSend = { input -> sendTerminalInput?.invoke(input) },
-        )
+        if (!(active && showConnectionDialog)) {
+            TerminalShortcutBar(
+                enabled = active && sendTerminalInput != null,
+                inputMode = inputMode,
+                lineInput = lineInput,
+                lineFocusNonce = lineFocusNonce,
+                lineKeyboardToggleNonce = lineKeyboardToggleNonce,
+                onLineInputChanged = { lineInput = it },
+                onSend = { input -> sendTerminalInput?.invoke(input) },
+                onSendLine = {
+                    val text = lineInput
+                    sendTerminalInput?.invoke("$text\r")
+                    lineInput = ""
+                },
+            )
+        }
     }
 
     if (active && showConnectionDialog) {
@@ -396,44 +473,108 @@ private fun TerminalTabPane(
 @Composable
 private fun TerminalShortcutBar(
     enabled: Boolean,
+    inputMode: TerminalInputMode,
+    lineInput: String,
+    lineFocusNonce: Int,
+    lineKeyboardToggleNonce: Int,
+    onLineInputChanged: (String) -> Unit,
     onSend: (String) -> Unit,
+    onSendLine: () -> Unit,
 ) {
+    val lineFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var lineInputFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(lineFocusNonce, inputMode, enabled) {
+        if (lineFocusNonce > 0 && inputMode == TerminalInputMode.Line && enabled) {
+            lineFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    LaunchedEffect(lineKeyboardToggleNonce, inputMode, enabled) {
+        if (lineKeyboardToggleNonce <= 0 || inputMode != TerminalInputMode.Line || !enabled) return@LaunchedEffect
+        if (lineInputFocused) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        } else {
+            lineFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
     Surface(
         tonalElevation = 2.dp,
         color = MaterialTheme.colorScheme.surface,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            TerminalShortcutButton(
-                label = "Ctrl-C",
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-                onClick = { onSend("\u0003") },
-            )
-            TerminalShortcutButton(
-                label = "Right",
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-                onClick = { onSend("\u001b[C") },
-            )
-            TerminalShortcutButton(
-                label = "Up",
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-                onClick = { onSend("\u001b[A") },
-            )
-            TerminalShortcutButton(
-                label = "Down",
-                enabled = enabled,
-                modifier = Modifier.weight(1f),
-                onClick = { onSend("\u001b[B") },
-            )
+            if (inputMode == TerminalInputMode.Line) {
+                val textColor = MaterialTheme.colorScheme.onSurface
+                BasicTextField(
+                    value = lineInput,
+                    onValueChange = onLineInputChanged,
+                    enabled = enabled,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = textColor),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { onSendLine() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(lineFocusRequester)
+                        .onFocusChanged { lineInputFocused = it.isFocused }
+                        .padding(1.dp),
+                    decorationBox = { innerTextField ->
+                        if (lineInput.isEmpty()) {
+                            Text(
+                                text = ">_ cmd",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        innerTextField()
+                    },
+                )
+                HorizontalDivider()
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TerminalShortcutButton(
+                    label = "Ctrl-C",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSend("\u0003") },
+                )
+                TerminalShortcutButton(
+                    label = "Right",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSend("\u001b[C") },
+                )
+                TerminalShortcutButton(
+                    label = "Up",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSend("\u001b[A") },
+                )
+                TerminalShortcutButton(
+                    label = "Down",
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSend("\u001b[B") },
+                )
+            }
         }
     }
 }
@@ -458,7 +599,22 @@ private fun TerminalShortcutButton(
 private data class WifiStatus(
     val connected: Boolean,
     val validated: Boolean,
+    val hasIpv4: Boolean,
+    val hasGlobalIpv6: Boolean,
 )
+
+private fun WifiStatus.description(): String = when {
+    connected && validated -> "connected, internet validated, ${addressFamilyDescription()}"
+    connected -> "connected, internet not validated, ${addressFamilyDescription()}"
+    else -> "disconnected"
+}
+
+private fun WifiStatus.addressFamilyDescription(): String = when {
+    hasIpv4 && hasGlobalIpv6 -> "IPv4 + IPv6"
+    hasGlobalIpv6 -> "IPv6 only"
+    hasIpv4 -> "IPv4 only"
+    else -> "no IP address"
+}
 
 @Composable
 private fun rememberWifiStatus(): WifiStatus {
@@ -498,17 +654,32 @@ private fun rememberWifiStatus(): WifiStatus {
 private fun Context.currentWifiStatus(): WifiStatus {
     val connectivityManager =
         getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return WifiStatus(connected = false, validated = false)
-    val capabilities = connectivityManager
-        .getNetworkCapabilities(connectivityManager.activeNetwork)
+            ?: return WifiStatus(
+                connected = false,
+                validated = false,
+                hasIpv4 = false,
+                hasGlobalIpv6 = false,
+            )
+    val activeNetwork = connectivityManager.activeNetwork
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+    val linkAddresses = connectivityManager
+        .getLinkProperties(activeNetwork)
+        ?.linkAddresses
+        .orEmpty()
     return WifiStatus(
         connected = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
         validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+        hasIpv4 = linkAddresses.any { it.address is Inet4Address },
+        hasGlobalIpv6 = linkAddresses.any { it.address.isGlobalIpv6() },
     )
 }
 
 @Composable
-private fun WifiStatusIcon(status: WifiStatus, transportPath: TransportPathStatus?) {
+private fun WifiStatusIcon(
+    status: WifiStatus,
+    transportPath: TransportPathStatus?,
+    onPathClick: () -> Unit,
+) {
     val color = when {
         status.connected && status.validated -> MaterialTheme.colorScheme.onSurface
         status.connected -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -565,6 +736,7 @@ private fun WifiStatusIcon(status: WifiStatus, transportPath: TransportPathStatu
         }
         if (transportLabel != null) {
             Column(
+                modifier = Modifier.clickable(onClick = onPathClick),
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
@@ -685,6 +857,92 @@ private fun AgentPickerDialog(
             }
         },
     )
+}
+
+@Composable
+private fun PathDiagnosticsDialog(
+    daemon: BoundDaemon,
+    rendezvous: RendezvousInfo?,
+    transportPath: TransportPathStatus?,
+    wifiStatus: WifiStatus,
+    onDismiss: () -> Unit,
+) {
+    val details = remember(rendezvous?.irohNodeAddrJson) {
+        P2pDetails.from(rendezvous?.irohNodeAddrJson)
+    }
+    val path = when (transportPath?.path) {
+        "direct" -> "Direct"
+        "relay" -> "Relay"
+        "tcp" -> "TCP"
+        "unknown" -> "Unknown"
+        null -> "Waiting"
+        else -> transportPath.path
+    }
+    val explanation = relayExplanation(transportPath, details, wifiStatus)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+        title = { Text("Path diagnostics") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                DetailLine("Daemon", daemon.displayName)
+                DetailLine("Current path", path)
+                DetailLine("Latency", transportPath?.latencyMs?.let { "${it} ms" } ?: "unknown")
+                DetailLine("Why", explanation)
+                DetailLine("Wi-Fi", wifiStatus.description())
+                DetailLine("Registry status", rendezvous?.status ?: "fetching")
+                DetailLine("Agent version", rendezvous?.agentVersion ?: "unknown")
+                details.nodeId?.let { DetailLine("Node", it.take(16)) }
+                if (details.directAddrs.isNotEmpty()) {
+                    DetailLine("Direct", details.directAddrs.joinToString())
+                }
+                if (details.relayAddrs.isNotEmpty()) {
+                    DetailLine("Relay", details.relayAddrs.joinToString())
+                }
+                if (details.directAddrs.isEmpty() && details.relayAddrs.isEmpty()) {
+                    DetailLine("Address", "waiting for rendezvous")
+                }
+            }
+        },
+    )
+}
+
+private fun relayExplanation(
+    transportPath: TransportPathStatus?,
+    details: P2pDetails,
+    wifiStatus: WifiStatus,
+): String {
+    return when (transportPath?.path) {
+        "direct" -> "A direct UDP path is selected."
+        "relay" -> when {
+            details.directAddrs.isEmpty() ->
+                "No direct address is currently advertised, so the relay is required."
+            details.hasPrivateOnlyIpv4DirectAddrs() ->
+                "The daemon direct address is private IPv4, so it only works on the same LAN."
+            !wifiStatus.hasGlobalIpv6 && details.hasOnlyGlobalIpv6DirectAddrs() ->
+                "The daemon advertises only global IPv6 direct addresses, but this phone network has no global IPv6."
+            !wifiStatus.hasIpv4 && details.hasOnlyIpv4DirectAddrs() ->
+                "The daemon advertises only IPv4 direct addresses, but this phone network has no IPv4."
+            else ->
+                "Both sides have a matching address family, so UDP is likely blocked or NAT traversal failed on one side."
+        }
+        "tcp" -> "Using the local TCP fallback instead of iroh P2P."
+        "unknown" -> "Iroh has not reported a selected path yet."
+        else -> "Waiting for iroh path selection."
+    }
+}
+
+private enum class AddressFamily {
+    Ipv4,
+    GlobalIpv6,
+    Other,
 }
 
 @Composable
@@ -848,21 +1106,15 @@ private fun versionWarnings(
     appVersion: String,
 ): List<String> {
     return buildList {
-        val normalizedAgent = agentVersion?.takeIf { it.isNotBlank() }
-        if (normalizedAgent == null) {
-            add("Agent version unavailable. Update the agent and registry.")
-        } else {
-            when (compareDottedVersions(normalizedAgent, appVersion)) {
+        agentVersion?.takeIf { it.isNotBlank() }?.let { normalizedAgent ->
+            when (compareMajorMinorVersions(normalizedAgent, appVersion)) {
                 1 -> add("App is older than the agent. Update the app.")
                 -1 -> add("Agent is older than the app. Update the agent.")
             }
         }
 
-        val normalizedRegistry = registryVersion?.takeIf { it.isNotBlank() }
-        if (normalizedRegistry == null) {
-            add("Registry version unavailable. Update the registry.")
-        } else {
-            when (compareDottedVersions(normalizedRegistry, appVersion)) {
+        registryVersion?.takeIf { it.isNotBlank() }?.let { normalizedRegistry ->
+            when (compareMajorMinorVersions(normalizedRegistry, appVersion)) {
                 1 -> add("App is older than the registry. Update the app.")
                 -1 -> add("Registry is older than the app. Update the registry.")
             }
@@ -870,23 +1122,23 @@ private fun versionWarnings(
     }
 }
 
-private fun compareDottedVersions(left: String, right: String): Int {
-    val leftParts = left.versionParts()
-    val rightParts = right.versionParts()
-    val count = maxOf(leftParts.size, rightParts.size)
-    for (index in 0 until count) {
-        val l = leftParts.getOrElse(index) { 0 }
-        val r = rightParts.getOrElse(index) { 0 }
-        if (l != r) return l.compareTo(r)
+private fun compareMajorMinorVersions(left: String, right: String): Int? {
+    val leftParts = left.majorMinorVersionParts() ?: return null
+    val rightParts = right.majorMinorVersionParts() ?: return null
+    return when {
+        leftParts.first != rightParts.first -> leftParts.first.compareTo(rightParts.first)
+        leftParts.second != rightParts.second -> leftParts.second.compareTo(rightParts.second)
+        else -> 0
     }
-    return 0
 }
 
-private fun String.versionParts(): List<Int> {
-    return substringBefore('-')
+private fun String.majorMinorVersionParts(): Pair<Int, Int>? {
+    val parts = substringBefore('-')
         .substringBefore('+')
         .split('.')
-        .map { part -> part.toIntOrNull() ?: 0 }
+    val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val minor = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    return major to minor
 }
 
 @Composable
@@ -901,7 +1153,42 @@ private data class P2pDetails(
     val nodeId: String?,
     val directAddrs: List<String>,
     val relayAddrs: List<String>,
-) {
+) { 
+    fun hasOnlyGlobalIpv6DirectAddrs(): Boolean {
+        return directAddressFamilies().let { families ->
+            families.isNotEmpty() && families.all { it == AddressFamily.GlobalIpv6 }
+        }
+    }
+
+    fun hasOnlyIpv4DirectAddrs(): Boolean {
+        return directAddressFamilies().let { families ->
+            families.isNotEmpty() && families.all { it == AddressFamily.Ipv4 }
+        }
+    }
+
+    fun hasPrivateOnlyIpv4DirectAddrs(): Boolean {
+        val addrs = directInetAddresses()
+        return addrs.isNotEmpty() && addrs.all { address ->
+            address is Inet4Address && address.isPrivateIpv4()
+        }
+    }
+
+    private fun directAddressFamilies(): List<AddressFamily> {
+        return directInetAddresses().map { address ->
+            when {
+                address is Inet4Address -> AddressFamily.Ipv4
+                address.isGlobalIpv6() -> AddressFamily.GlobalIpv6
+                else -> AddressFamily.Other
+            }
+        }
+    }
+
+    private fun directInetAddresses(): List<InetAddress> {
+        return directAddrs.mapNotNull { addr ->
+            runCatching { InetAddress.getByName(addr.socketHost()) }.getOrNull()
+        }
+    }
+
     companion object {
         fun from(nodeAddrJson: String?): P2pDetails {
             if (nodeAddrJson.isNullOrBlank()) {
@@ -934,4 +1221,30 @@ private data class P2pDetails(
             }
         }
     }
+}
+
+private fun InetAddress.isGlobalIpv6(): Boolean {
+    return this is Inet6Address &&
+        !isAnyLocalAddress &&
+        !isLinkLocalAddress &&
+        !isLoopbackAddress &&
+        !isMulticastAddress &&
+        !isSiteLocalAddress
+}
+
+private fun Inet4Address.isPrivateIpv4(): Boolean {
+    val bytes = address.map { it.toInt() and 0xff }
+    return bytes[0] == 10 ||
+        bytes[0] == 127 ||
+        (bytes[0] == 172 && bytes[1] in 16..31) ||
+        (bytes[0] == 192 && bytes[1] == 168) ||
+        (bytes[0] == 169 && bytes[1] == 254)
+}
+
+private fun String.socketHost(): String {
+    val value = trim()
+    if (value.startsWith("[")) {
+        return value.substringAfter("[").substringBefore("]")
+    }
+    return value.substringBeforeLast(":", value)
 }

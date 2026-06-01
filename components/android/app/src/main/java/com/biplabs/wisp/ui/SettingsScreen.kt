@@ -1,13 +1,25 @@
 package com.biplabs.wisp.ui
 
+import android.app.Activity
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import com.biplabs.wisp.data.BoundDaemon
+import com.biplabs.wisp.data.TerminalInputMode
 import com.biplabs.wisp.data.WispRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -37,7 +49,18 @@ fun SettingsScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var refreshNonce by remember { mutableIntStateOf(0) }
     var pendingDelete by remember { mutableStateOf<BoundDaemon?>(null) }
+    var inputMode by remember { mutableStateOf(repository.terminalInputMode) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+
+    LaunchedEffect(Unit) {
+        focusManager.clearFocus(force = true)
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow((context as? Activity)?.window?.decorView?.windowToken, 0)
+        delay(150)
+        imm?.hideSoftInputFromWindow((context as? Activity)?.window?.decorView?.windowToken, 0)
+    }
 
     suspend fun refreshAgents() {
         runCatching {
@@ -65,9 +88,12 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
-                navigationIcon = {
-                    TextButton(onClick = onBack) {
-                        Text("Back")
+                actions = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Close settings",
+                        )
                     }
                 },
             )
@@ -76,39 +102,88 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
                 .fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            RegistryUrlFormContent(
-                repository = repository,
-                actionLabel = "Save",
-                onSaved = { refreshNonce += 1 },
-            )
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text("Agents") },
-                supportingContent = {
-                    Text(error ?: if (agents.isEmpty()) "No paired agents" else "${agents.size} paired")
-                },
-                trailingContent = {
+            SettingsSection(
+                title = "Terminal Input",
+                description = "Choose how typing is delivered to the remote terminal.",
+            ) {
+                TerminalInputModePicker(
+                    selected = inputMode,
+                    onSelected = { selected ->
+                        inputMode = selected
+                        repository.terminalInputMode = selected
+                    },
+                )
+            }
+
+            SettingsSection(
+                title = "Connections",
+                description = "Manage the registry and paired agents.",
+            ) {
+                Text("Registry", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "The cloud registry coordinates pairing and rendezvous.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                RegistryUrlFormContent(
+                    repository = repository,
+                    actionLabel = "Save",
+                    requireChanged = true,
+                    onSaved = { refreshNonce += 1 },
+                )
+
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Agents", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            error ?: if (agents.isEmpty()) {
+                                "No paired agents"
+                            } else {
+                                "${agents.size} paired"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     TextButton(onClick = onPair) {
                         Text("Pair")
                     }
-                },
-            )
-            agents.forEach { agent ->
-                ListItem(
-                    headlineContent = { Text(agent.displayName) },
-                    supportingContent = { Text(agent.status) },
-                    trailingContent = {
-                        IconButton(onClick = { pendingDelete = agent }) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = "Delete pairing",
-                            )
-                        }
-                    },
-                )
-                HorizontalDivider()
+                }
+                if (agents.isEmpty()) {
+                    Text(
+                        text = "Pair an agent to open terminal sessions from this device.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                agents.forEachIndexed { index, agent ->
+                    ListItem(
+                        headlineContent = { Text(agent.displayName) },
+                        supportingContent = { Text(agent.status) },
+                        trailingContent = {
+                            IconButton(onClick = { pendingDelete = agent }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Delete,
+                                    contentDescription = "Delete pairing",
+                                )
+                            }
+                        },
+                    )
+                    if (index != agents.lastIndex) {
+                        HorizontalDivider()
+                    }
+                }
             }
         }
     }
@@ -146,6 +221,117 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    description: String,
+    modifier: Modifier = Modifier,
+    trailing: @Composable (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ElevatedCard(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                trailing?.invoke()
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun TerminalInputModePicker(
+    selected: TerminalInputMode,
+    onSelected: (TerminalInputMode) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TerminalInputModeOption(
+            mode = TerminalInputMode.Sync,
+            selected = selected == TerminalInputMode.Sync,
+            title = "Sync",
+            description = "Send every key immediately, like SSH. Most accurate for editors and interactive tools, but high latency is visible.",
+            onSelected = onSelected,
+        )
+        TerminalInputModeOption(
+            mode = TerminalInputMode.Line,
+            selected = selected == TerminalInputMode.Line,
+            title = "Line",
+            description = "Type in a command box and send only when you press Enter. Best for high-latency command entry.",
+            onSelected = onSelected,
+        )
+        TerminalInputModeOption(
+            mode = TerminalInputMode.Predictive,
+            selected = selected == TerminalInputMode.Predictive,
+            title = "Predictive",
+            description = "Show local input immediately and sync it in short batches. Fast for shell prompts, but can fall back poorly in some apps.",
+            onSelected = onSelected,
+        )
+    }
+}
+
+@Composable
+private fun TerminalInputModeOption(
+    mode: TerminalInputMode,
+    selected: Boolean,
+    title: String,
+    description: String,
+    onSelected: (TerminalInputMode) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onSelected(mode) },
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) colors.primaryContainer else colors.surface,
+        border = BorderStroke(
+            1.dp,
+            if (selected) colors.primary else colors.outlineVariant,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = { onSelected(mode) },
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selected) {
+                        colors.onPrimaryContainer
+                    } else {
+                        colors.onSurfaceVariant
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -308,10 +494,14 @@ private fun RegistryUrlForm(
 private fun RegistryUrlFormContent(
     repository: WispRepository,
     actionLabel: String,
+    requireChanged: Boolean = false,
     onSaved: () -> Unit,
 ) {
     var registryUrl by remember { mutableStateOf(repository.cloudUrl) }
     var error by remember { mutableStateOf<String?>(null) }
+    val normalizedRegistryUrl = registryUrl.trim().trimEnd('/')
+    val canSave = normalizedRegistryUrl.isNotBlank() &&
+        (!requireChanged || normalizedRegistryUrl != repository.cloudUrl)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
@@ -327,15 +517,16 @@ private fun RegistryUrlFormContent(
 
         Button(
             onClick = {
-                val normalized = registryUrl.trim()
-                if (!normalized.startsWith("https://") && !normalized.startsWith("http://")) {
+                if (!normalizedRegistryUrl.startsWith("https://") &&
+                    !normalizedRegistryUrl.startsWith("http://")
+                ) {
                     error = "Enter a full URL"
                     return@Button
                 }
-                repository.updateRegistryUrl(normalized)
+                repository.updateRegistryUrl(normalizedRegistryUrl)
                 onSaved()
             },
-            enabled = registryUrl.isNotBlank(),
+            enabled = canSave,
         ) {
             Text(actionLabel)
         }

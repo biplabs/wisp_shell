@@ -10,6 +10,12 @@ import java.net.URL
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+enum class TerminalInputMode {
+    Sync,
+    Line,
+    Predictive,
+}
+
 class WispRepository(context: Context) {
     private val prefs = context.getSharedPreferences("wispshell", Context.MODE_PRIVATE)
 
@@ -27,6 +33,17 @@ class WispRepository(context: Context) {
 
     val clientPrivateKey: String
         get() = identity().privateKey
+
+    var terminalInputMode: TerminalInputMode
+        get() = runCatching {
+            TerminalInputMode.valueOf(
+                prefs.getString(KEY_TERMINAL_INPUT_MODE, TerminalInputMode.Predictive.name)
+                    ?: TerminalInputMode.Predictive.name,
+            )
+        }.getOrDefault(TerminalInputMode.Predictive)
+        set(value) {
+            prefs.edit().putString(KEY_TERMINAL_INPUT_MODE, value.name).apply()
+        }
 
     fun savePairingUri(uriText: String) {
         val uri = Uri.parse(uriText)
@@ -221,6 +238,7 @@ class WispRepository(context: Context) {
         private const val KEY_PUBLIC_KEY = "client_public_key"
         private const val KEY_PRIVATE_KEY = "client_private_key"
         private const val KEY_TERMINAL_TABS = "terminal_tabs"
+        private const val KEY_TERMINAL_INPUT_MODE = "terminal_input_mode"
         private const val DEFAULT_REGISTRY_URL = "https://wisp.biplabs.com"
     }
 }
