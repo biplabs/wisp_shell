@@ -272,6 +272,8 @@ fun TerminalScreen(
                             onRendezvousChanged = { info ->
                                 rendezvousByTab = rendezvousByTab + (tab.id to info)
                             },
+                            networkChangeNonce = wifiStatus.changeNonce,
+                            networkReady = wifiStatus.connected && wifiStatus.validated,
                             inputMode = effectiveInputMode,
                         )
                     }
@@ -341,6 +343,8 @@ private fun TerminalTabPane(
     onTitleChanged: (String) -> Unit,
     onTransportPathChanged: (TransportPathStatus?) -> Unit,
     onRendezvousChanged: (RendezvousInfo?) -> Unit,
+    networkChangeNonce: Int,
+    networkReady: Boolean,
     inputMode: TerminalInputMode,
 ) {
     var rendezvous by remember(tab.daemon.bindingId) { mutableStateOf<RendezvousInfo?>(null) }
@@ -412,6 +416,24 @@ private fun TerminalTabPane(
         delay(2_000)
         connectionError = null
         reconnectNonce++
+    }
+
+    LaunchedEffect(active, networkChangeNonce, networkReady) {
+        if (!active || networkChangeNonce == 0) return@LaunchedEffect
+        onTransportPathChanged(null)
+        if (!networkReady) {
+            connectionError = null
+            connectionState = ConnectionState.Connecting
+            showConnectionDialog = true
+            return@LaunchedEffect
+        }
+        delay(1_500)
+        onTransportPathChanged(null)
+        connectionError = null
+        error = null
+        connectionState = ConnectionState.Connecting
+        showConnectionDialog = true
+        retryNonce++
     }
 
     LaunchedEffect(active, error, retryNonce) {
@@ -697,6 +719,7 @@ private data class WifiStatus(
     val validated: Boolean,
     val hasIpv4: Boolean,
     val hasGlobalIpv6: Boolean,
+    val changeNonce: Int,
 )
 
 private fun WifiStatus.description(): String = when {
@@ -715,7 +738,8 @@ private fun WifiStatus.addressFamilyDescription(): String = when {
 @Composable
 private fun rememberWifiStatus(): WifiStatus {
     val context = LocalContext.current
-    var status by remember(context) { mutableStateOf(context.currentWifiStatus()) }
+    var changeNonce by remember(context) { mutableIntStateOf(0) }
+    var status by remember(context) { mutableStateOf(context.currentWifiStatus(changeNonce)) }
     DisposableEffect(context) {
         val connectivityManager =
             context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -724,7 +748,13 @@ private fun rememberWifiStatus(): WifiStatus {
         val callback = object : ConnectivityManager.NetworkCallback() {
             private fun refresh() {
                 mainHandler.post {
-                    status = context.currentWifiStatus()
+                    val nextStatus = context.currentWifiStatus(changeNonce)
+                    if (status.hasSameConnectivity(nextStatus)) {
+                        status = nextStatus
+                    } else {
+                        changeNonce += 1
+                        status = context.currentWifiStatus(changeNonce)
+                    }
                 }
             }
 
@@ -738,7 +768,7 @@ private fun rememberWifiStatus(): WifiStatus {
         runCatching {
             connectivityManager.registerDefaultNetworkCallback(callback)
         }.onFailure {
-            status = context.currentWifiStatus()
+            status = context.currentWifiStatus(changeNonce)
         }
         onDispose {
             runCatching { connectivityManager.unregisterNetworkCallback(callback) }
@@ -747,7 +777,13 @@ private fun rememberWifiStatus(): WifiStatus {
     return status
 }
 
-private fun Context.currentWifiStatus(): WifiStatus {
+private fun WifiStatus.hasSameConnectivity(other: WifiStatus): Boolean =
+    connected == other.connected &&
+        validated == other.validated &&
+        hasIpv4 == other.hasIpv4 &&
+        hasGlobalIpv6 == other.hasGlobalIpv6
+
+private fun Context.currentWifiStatus(changeNonce: Int): WifiStatus {
     val connectivityManager =
         getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return WifiStatus(
@@ -755,6 +791,7 @@ private fun Context.currentWifiStatus(): WifiStatus {
                 validated = false,
                 hasIpv4 = false,
                 hasGlobalIpv6 = false,
+                changeNonce = changeNonce,
             )
     val activeNetwork = connectivityManager.activeNetwork
     val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
@@ -767,6 +804,7 @@ private fun Context.currentWifiStatus(): WifiStatus {
         validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
         hasIpv4 = linkAddresses.any { it.address is Inet4Address },
         hasGlobalIpv6 = linkAddresses.any { it.address.isGlobalIpv6() },
+        changeNonce = changeNonce,
     )
 }
 

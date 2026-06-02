@@ -11,14 +11,15 @@ use std::{
     ffi::c_void,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
-        atomic::{AtomicBool, AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         Arc, LazyLock, Mutex,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
-    time::{timeout, Duration},
+    time::{interval, timeout, Duration},
 };
 use wispshell_protocol::{
     decode_binary_header, encode_binary_frame, encode_short_binary_frame, generate_pairing_code,
@@ -42,6 +43,7 @@ struct NativeTerminal {
 enum TerminalCommand {
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
+    Ping(String),
     Close,
 }
 
@@ -278,6 +280,7 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let session_id = std::sync::Arc::new(Mutex::new(None::<String>));
+        let last_pong_ms = Arc::new(AtomicU64::new(now_millis()));
         let read_callback = Callback {
             vm: callback.vm.clone(),
             object: callback.object.clone(),
@@ -287,6 +290,18 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
             object: callback.object.clone(),
         };
         let command_session_id = session_id.clone();
+        let heartbeat_session_id = session_id.clone();
+        let read_last_pong_ms = last_pong_ms.clone();
+        let heartbeat_last_pong_ms = last_pong_ms.clone();
+        let heartbeat_tx = tx.clone();
+        let heartbeat_callback = Callback {
+            vm: callback.vm.clone(),
+            object: callback.object.clone(),
+        };
+        let command_callback = Callback {
+            vm: callback.vm.clone(),
+            object: callback.object.clone(),
+        };
 
         RUNTIME.spawn(async move {
             let mut paths = connection_info.paths();
@@ -344,8 +359,12 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                     Ok(Some(AgentStreamFrame::Json(frame))) => match frame {
                         AgentToClient::SessionAttached { session_id: id, .. } => {
                             attached = true;
+                            read_last_pong_ms.store(now_millis(), Ordering::Relaxed);
                             *session_id.lock().unwrap() = Some(id);
                             read_callback.state("attached");
+                        }
+                        AgentToClient::Pong { .. } => {
+                            read_last_pong_ms.store(now_millis(), Ordering::Relaxed);
                         }
                         AgentToClient::Scrollback { chunks_b64, .. } => {
                             for chunk in chunks_b64 {
@@ -380,6 +399,31 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
         });
 
         RUNTIME.spawn(async move {
+            let mut ticker = interval(Duration::from_secs(10));
+            let mut nonce_counter = 0u64;
+            loop {
+                ticker.tick().await;
+                if heartbeat_session_id.lock().unwrap().is_none() {
+                    continue;
+                }
+                let elapsed_ms = now_millis()
+                    .saturating_sub(heartbeat_last_pong_ms.load(Ordering::Relaxed));
+                if elapsed_ms > 30_000 {
+                    heartbeat_callback.error("terminal heartbeat timed out");
+                    heartbeat_callback.state("disconnected");
+                    break;
+                }
+                nonce_counter = nonce_counter.wrapping_add(1);
+                if heartbeat_tx
+                    .send(TerminalCommand::Ping(format!("android-{nonce_counter}")))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        RUNTIME.spawn(async move {
             while let Some(command) = rx.recv().await {
                 match command {
                     TerminalCommand::Input(bytes) => {
@@ -400,6 +444,8 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                                 }
                             };
                         if write_result.is_err() {
+                            command_callback.error("terminal write failed");
+                            command_callback.state("disconnected");
                             break;
                         }
                     }
@@ -413,6 +459,18 @@ pub extern "system" fn Java_com_biplabs_wisp_bridge_WispNative_connectP2pTermina
                             rows,
                         };
                         if write_frame_async(&mut writer, &frame).await.is_err() {
+                            command_callback.error("terminal resize failed");
+                            command_callback.state("disconnected");
+                            break;
+                        }
+                    }
+                    TerminalCommand::Ping(nonce) => {
+                        if write_frame_async(&mut writer, &ClientToAgent::Ping { nonce })
+                            .await
+                            .is_err()
+                        {
+                            command_callback.error("terminal heartbeat failed");
+                            command_callback.state("disconnected");
                             break;
                         }
                     }
@@ -523,6 +581,13 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> &str {
         .copied()
         .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
         .unwrap_or("unknown panic")
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn write_frame(

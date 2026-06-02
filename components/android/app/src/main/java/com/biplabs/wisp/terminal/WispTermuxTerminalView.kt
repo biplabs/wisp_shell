@@ -222,7 +222,7 @@ private class TermuxTerminalHolder(
         dummySession = TerminalSession(
             "/system/bin/sh",
             "/",
-            arrayOf("-c", "while true; do sleep 3600; done"),
+            arrayOf("sh", "-c", "while true; do sleep 3600; done"),
             emptyArray(),
             2000,
             this,
